@@ -271,6 +271,13 @@ function run(verb, args, state, config, problem) {
   const vm = findVm(state, args.name);
   if (verb === "show") return { vm: detail(config, vm) };
   if (verb === "console-info") {
+    // A console is control of the VM: only for VMs the pattern allows.
+    if (!isAllowed(config, vm.name)) {
+      throw new Refused(
+        "name-not-allowed",
+        `${vm.name} does not match this host's name pattern`,
+      );
+    }
     return {
       console: {
         kind: "vmconnect",

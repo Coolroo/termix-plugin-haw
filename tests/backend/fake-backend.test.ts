@@ -233,3 +233,14 @@ describe("the fake back end", () => {
     });
   });
 });
+
+describe("consoles of VMs outside the pattern", () => {
+  it("are refused, as vmctl.ps1 refuses them", () => {
+    expect(
+      host({ namePattern: "^web-" }).send("console-info", { name: "build-1" }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "name-not-allowed" },
+    });
+  });
+});

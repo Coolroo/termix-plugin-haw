@@ -79,15 +79,16 @@ writable by it). No verb changes it.
 ```json
 {
   "namePattern": "^[a-z][a-z0-9-]{0,62}$",
-  "protected": ["gbtest-*", "build-1"],
+  "protected": ["test-*", "build-1"],
   "ceilings": { "cpus": 16, "memoryMB": 32768, "diskGB": 500 },
   "console": { "host": "hv1.example.lan", "port": 2179 }
 }
 ```
 
 - `namePattern`: a regular expression for the VMs that HAW may act on. A VM
-  whose name does not match is listed with `allowed: false` and every action on
-  it is refused with `name-not-allowed`. Default `^[a-z][a-z0-9-]{0,62}$`.
+  whose name does not match is listed with `allowed: false`. `show` still
+  answers; every action on it, and `console-info` (a console is control of the
+  VM), is refused with `name-not-allowed`. Default `^[a-z][a-z0-9-]{0,62}$`.
 - `protected`: names or wildcards (`*` and `?`, no case). A protected VM is
   listed with `protected: true`. It can be started, but `stop`, `restart` (and
   in later versions `delete`, `snapshot`, `restore`) are refused with
@@ -149,7 +150,7 @@ startup memory. `addresses` may be empty (no guest services).
   "verbs": ["info", "list", "show", "start", "stop", "restart", "console-info"],
   "limits": {
     "namePattern": "^[a-z][a-z0-9-]{0,62}$",
-    "protected": ["gbtest-*"],
+    "protected": ["test-*"],
     "ceilings": { "cpus": 16, "memoryMB": 32768, "diskGB": 500 }
   },
   "configProblem": null
@@ -158,7 +159,7 @@ startup memory. `addresses` may be empty (no guest services).
 
 `verbs` lists only the verbs this back end does. `configProblem` is a message
 when the config file is missing or wrong; then every verb but `info` answers
-`config`.
+`config`, and `limits` may be `null` or the defaults.
 
 ## Rules for a back end
 

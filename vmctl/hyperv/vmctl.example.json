@@ -1,0 +1,6 @@
+{
+  "namePattern": "^[a-z][a-z0-9-]{0,62}$",
+  "protected": ["build-*", "web-1"],
+  "ceilings": { "cpus": 16, "memoryMB": 32768, "diskGB": 500 },
+  "console": { "host": "hv1.example.lan", "port": 2179 }
+}

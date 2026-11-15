@@ -14,3 +14,7 @@ termix-plugin-signing.key
 .claude/
 .DS_Store
 Thumbs.db
+
+# The fake back end's state and config in a rehearsal
+vmctl/fake/state.json
+vmctl/fake/vmctl.json
