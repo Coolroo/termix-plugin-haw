@@ -1,0 +1,16 @@
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# vmctl.ps1 and install.ps1 are pinned by the SHA-256 of their bytes in the
+# repo, so they keep LF everywhere: a checkout and a download hash the same.
+*.ps1 text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary

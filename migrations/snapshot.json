@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "tables": {
+    "vm_hosts": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "hostId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "interface": {
+          "type": "varchar",
+          "length": 32,
+          "notNull": true
+        },
+        "addedBy": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "addedAt": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "lastInfo": {
+          "type": "text"
+        },
+        "lastCheckedAt": {
+          "type": "timestamp"
+        }
+      },
+      "indexes": [
+        {
+          "name": "uq_p_haw_vm_hosts_host",
+          "columns": [
+            "hostId"
+          ],
+          "unique": true
+        }
+      ]
+    },
+    "console_links": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "vmHostId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "vmId": {
+          "type": "varchar",
+          "length": 64,
+          "notNull": true
+        },
+        "consoleHostId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "linkedBy": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "linkedAt": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "indexes": [
+        {
+          "name": "uq_p_haw_console_links_vm",
+          "columns": [
+            "vmHostId",
+            "vmId"
+          ],
+          "unique": true
+        }
+      ]
+    },
+    "actions": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "userId": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "hostId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "action": {
+          "type": "varchar",
+          "length": 32,
+          "notNull": true
+        },
+        "vmName": {
+          "type": "varchar",
+          "length": 255
+        },
+        "force": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "ok": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "code": {
+          "type": "varchar",
+          "length": 32
+        },
+        "message": {
+          "type": "text"
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_p_haw_actions_at",
+          "columns": [
+            "at"
+          ]
+        },
+        {
+          "name": "idx_p_haw_actions_host",
+          "columns": [
+            "hostId"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,159 @@
+{
+  "plugin": {
+    "name": "Hundred Acre Wood",
+    "description": "A VM manager for any host you add: see every VM, start, stop and restart them, and open their consoles, through one fixed command on each host."
+  },
+  "tab": {
+    "title": "VMs"
+  },
+  "permissions": {
+    "view": {
+      "title": "See VMs (viewer)",
+      "description": "See the VM hosts, their VMs and the record of actions."
+    },
+    "operate": {
+      "title": "Power VMs (operator)",
+      "description": "Start, shut down, turn off and restart VMs, and open their consoles. Includes See VMs."
+    },
+    "manage": {
+      "title": "Manage VM hosts (owner)",
+      "description": "Add and remove VM hosts and link consoles. Includes Power VMs and See VMs."
+    }
+  },
+  "interfaces": {
+    "hyper-v": {
+      "label": "Hyper-V (Windows)"
+    }
+  },
+  "role": {
+    "owner": "Owner",
+    "operator": "Operator",
+    "viewer": "Viewer",
+    "none": "You have no HAW role. Ask an admin for See VMs, Power VMs or Manage VM hosts."
+  },
+  "hosts": {
+    "title": "VM hosts",
+    "empty": "No VM hosts yet.",
+    "emptyHint": "Add a Termix host as a VM host, then choose its interface.",
+    "add": "Add VM host",
+    "refresh": "Refresh",
+    "remove": "Remove",
+    "removeTitle": "Remove {{name}} from HAW?",
+    "removeText": "HAW forgets this host and its console links. Its VMs are not touched, and the Termix host stays.",
+    "record": "Record",
+    "summary": "{{backend}} {{version}} · {{cpus}} CPUs · {{free}} of {{memory}} free",
+    "checked": "checked {{time}}",
+    "configProblem": "The host's vmctl.json has a problem: {{problem}}. Only reads work until it is fixed on the host.",
+    "limits": "Name pattern {{pattern}} · protected: {{protected}}",
+    "ceilings": "Ceilings: {{cpus}} CPUs, {{memory}} memory for running VMs",
+    "noProtected": "none"
+  },
+  "add": {
+    "title": "Add a VM host",
+    "host": "Termix host",
+    "hostHint": "The host HAW logs in to. It should log in as the vmctl account, with a key.",
+    "pickHost": "Choose a host",
+    "added": "(added)",
+    "newHost": "Add a host in Termix",
+    "reload": "Reload hosts",
+    "interface": "Interface",
+    "check": "Check",
+    "checking": "Checking…",
+    "ok": "vmctl answers: {{backend}} {{version}} on {{name}}, protocol version 1.",
+    "save": "Add VM host",
+    "cancel": "Cancel",
+    "failed": "The check failed: {{error}}",
+    "setupTitle": "Set up vmctl on this host",
+    "setupIntro": "vmctl did not answer. Do these steps once, then press Check again.",
+    "detail": "What the host said"
+  },
+  "setup": {
+    "hyper-v": {
+      "key": "In Termix, open Credentials, add an SSH key credential named after the machine (for example vmctl-hv1), press Generate Key Pair (ed25519), save it, and copy its public key.",
+      "host": "Add a Termix host for the machine: its address, port 22, user vmctl, and that credential for login. The account can only run vmctl, so HAW is its only use.",
+      "hostKey": "Store the host key: open an SSH terminal to the new host once, compare the fingerprint it shows with the one the machine prints for ssh-keygen -lf C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub, and accept it. The login itself fails until the next step.",
+      "install": "On the machine, in PowerShell as administrator, run these lines. Put the public key in place of the text PASTE THE PUBLIC KEY HERE, and list the VMs HAW must never stop in -Protected. The script checks each file's SHA-256 and changes sshd_config only through sshd -t.",
+      "protect": "To change the protect list, the name pattern or the ceilings later, run install.ps1 again with -ReplaceConfig, or edit C:\\ProgramData\\haw\\vmctl.json as administrator. HAW can't change them.",
+      "check": "Back here, choose the host and Hyper-V, and press Check."
+    }
+  },
+  "vms": {
+    "empty": "No VMs on this host.",
+    "loading": "Reading VMs…",
+    "name": "VM",
+    "state": "State",
+    "size": "Size",
+    "addresses": "Addresses",
+    "uptime": "Up",
+    "protected": "protected",
+    "notAllowed": "not managed",
+    "notAllowedHint": "Its name does not match the host's pattern: HAW only reads it.",
+    "protectedHint": "On the host's protect list: it can be started, never stopped from HAW.",
+    "size_value": "{{cpus}} CPU · {{memory}}",
+    "states": {
+      "running": "Running",
+      "off": "Off",
+      "paused": "Paused",
+      "saved": "Saved",
+      "starting": "Starting",
+      "stopping": "Stopping",
+      "other": "Other"
+    }
+  },
+  "actions": {
+    "start": "Start",
+    "shutdown": "Shut down",
+    "turnoff": "Turn off",
+    "restart": "Restart",
+    "reset": "Reset",
+    "console": "Console",
+    "confirm": {
+      "start": "Start {{name}}?",
+      "shutdown": "Shut down {{name}}?",
+      "turnoff": "Turn off {{name}}?",
+      "restart": "Restart {{name}}?",
+      "reset": "Reset {{name}}?"
+    },
+    "explain": {
+      "start": "The host starts the VM.",
+      "shutdown": "The host asks the guest to shut down. Unsaved work in the guest may be lost.",
+      "turnoff": "Like pulling the plug: the VM stops at once and unsaved work is lost.",
+      "restart": "The guest shuts down, then the VM starts again.",
+      "reset": "A hard reset: the VM restarts at once and unsaved work is lost."
+    },
+    "done": "{{name}}: {{state}}",
+    "cancel": "Cancel"
+  },
+  "console": {
+    "title": "Console of {{name}}",
+    "open": "Open console",
+    "notLinked": "No Termix host opens this console yet. The Remote Desktop plugin opens a Hyper-V console from a saved host with these settings:",
+    "fields": "Remote Desktop: on, port {{port}}, security VMConnect, the VM id below as the preconnection blob, the address {{host}}.",
+    "vmId": "VM id",
+    "link": "Link a host",
+    "linkHint": "Choose the Termix host you set up for this console.",
+    "unlink": "Unlink",
+    "linked": "Opens with {{name}}",
+    "close": "Close",
+    "noRd": "The Remote Desktop plugin is not installed or its tab is not available."
+  },
+  "record": {
+    "title": "Record",
+    "empty": "Nothing recorded yet.",
+    "line": "{{time}} · {{user}} · {{action}}",
+    "failed": "failed: {{message}}"
+  },
+  "errors": {
+    "load": "HAW could not read this: {{error}}",
+    "no-host-key": "Termix has no stored host key for this host. Open an SSH terminal to it once and accept the key, then try again.",
+    "no-reply": "vmctl did not answer on this host.",
+    "unreachable": "HAW could not log in to the host: {{error}}",
+    "timeout": "vmctl did not answer in time.",
+    "protected": "{{error}}",
+    "generic": "{{error}}"
+  },
+  "copy": {
+    "copy": "Copy",
+    "copied": "Copied"
+  }
+}

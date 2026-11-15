@@ -1,0 +1,70 @@
+{
+  "id": "haw",
+  "name": "Hundred Acre Wood",
+  "version": "1.0.0",
+  "description": "A VM manager for any host you add: see every VM, start, stop and restart them, and open their consoles, through one fixed command on each host.",
+  "author": {
+    "name": "Coolroo"
+  },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/Coolroo/termix-plugin-haw",
+  "docs": "https://github.com/Coolroo/termix-plugin-haw/tree/main/docs",
+  "category": "Infrastructure",
+  "icon": "Trees",
+  "features": [
+    "Add any Termix host as a VM host and choose its interface (Hyper-V in 1.0)",
+    "HAW runs one fixed command on the host, vmctl, as an account that can do nothing else",
+    "Every VM on each host with its state, size, addresses and uptime",
+    "Start, shut down, turn off and restart, with a confirm",
+    "The host keeps its own limits: a name pattern, a protect list and ceilings that HAW can't change",
+    "Open a VM's console in the Remote Desktop plugin",
+    "Three roles: owner, operator and viewer",
+    "Every action recorded, in HAW and in Termix's audit log"
+  ],
+  "env": [],
+  "engine": {
+    "termix": ">=26.11.0",
+    "api": "^1.13"
+  },
+  "capabilities": [
+    "db:own",
+    "network:serve",
+    "ui:surface",
+    "hosts:read",
+    "ssh:connect",
+    "credentials:use"
+  ],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "haw",
+        "titleKey": "tab.title",
+        "icon": "Trees",
+        "openFrom": ["rail"]
+      }
+    ],
+    "permissions": [
+      {
+        "name": "view",
+        "titleKey": "permissions.view.title",
+        "descriptionKey": "permissions.view.description",
+        "defaultRoles": ["admin"]
+      },
+      {
+        "name": "operate",
+        "titleKey": "permissions.operate.title",
+        "descriptionKey": "permissions.operate.description",
+        "defaultRoles": ["admin"]
+      },
+      {
+        "name": "manage",
+        "titleKey": "permissions.manage.title",
+        "descriptionKey": "permissions.manage.description",
+        "defaultRoles": ["admin"]
+      }
+    ]
+  },
+  "locales": "locales",
+  "platforms": ["linux", "win32", "darwin"],
+  "desktop": "server"
+}
