@@ -51,13 +51,14 @@ export function ConsolePanel({
 
   async function load() {
     try {
-      setAnswer(
-        (
-          await api.get<ConsoleAnswer>(
-            `/hosts/${host.id}/vms/${encodeURIComponent(vm.name)}/console`,
-          )
-        ).data,
-      );
+      const reply = (
+        await api.get<ConsoleAnswer>(
+          `/hosts/${host.id}/vms/${encodeURIComponent(vm.name)}/console`,
+        )
+      ).data;
+      setAnswer(reply);
+      // The picker starts on the host linked now.
+      setPick(reply.consoleHost ? String(reply.consoleHost.id) : "");
     } catch (failure) {
       setError(refusal(failure).error);
     }
@@ -95,7 +96,7 @@ export function ConsolePanel({
     try {
       await api.put(
         `/hosts/${host.id}/consoles/${encodeURIComponent(answer.console.vmId)}`,
-        { consoleHostId },
+        { consoleHostId, vmName: vm.name },
       );
       await load();
     } catch (failure) {

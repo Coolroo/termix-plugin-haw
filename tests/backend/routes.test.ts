@@ -466,3 +466,39 @@ describe("the record", () => {
     expect((await server.call("GET", "/actions?limit=1")).body).toHaveLength(1);
   });
 });
+
+describe("the record of console links", () => {
+  it("names the VM, reaches Termix's audit log, and names hosts that are no VM host", async () => {
+    const { server, id } = await withVmHost(start);
+    const vmId = (await server.call("GET", `/hosts/${id}/vms/web-1/console`))
+      .body.console.vmId;
+    await server.call("PUT", `/hosts/${id}/consoles/${vmId}`, {
+      consoleHostId: 3,
+      vmName: "web-1",
+    });
+    expect(
+      (
+        await server.call("PUT", `/hosts/${id}/consoles/${vmId}`, {
+          consoleHostId: 3,
+          vmName: "a*b",
+        })
+      ).status,
+    ).toBe(400);
+    server.setExec(async () => execResult(""));
+    await server.call("POST", "/hosts", { hostId: 2, interface: "hyper-v" });
+    const record = await server.call("GET", "/actions");
+    expect(record.body[0]).toMatchObject({
+      action: "add-host",
+      ok: false,
+      hostName: "hv-2",
+    });
+    expect(record.body[1]).toMatchObject({
+      action: "link-console",
+      vmName: "web-1",
+      hostName: "hv-1",
+    });
+    expect(server.mock.audits.map((line) => line.action)).toContain(
+      "haw.link-console",
+    );
+  });
+});

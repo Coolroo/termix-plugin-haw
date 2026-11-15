@@ -141,7 +141,9 @@
     "title": "Record",
     "empty": "Nothing recorded yet.",
     "line": "{{time}} · {{user}} · {{action}}",
-    "failed": "failed: {{message}}"
+    "failed": "failed: {{message}}",
+    "you": "you",
+    "other": "user {{id}}"
   },
   "errors": {
     "load": "HAW could not read this: {{error}}",

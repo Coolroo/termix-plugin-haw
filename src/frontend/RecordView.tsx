@@ -1,12 +1,17 @@
 /** The record of actions: who did what on which host, and what it answered. */
 
 import { useEffect, useState } from "react";
-import { usePluginApi, useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+import {
+  useCurrentUser,
+  usePluginApi,
+  useTranslation,
+} from "@termix-ssh/plugin-sdk/frontend";
 import { EmptyState, ListBadge } from "@termix-ssh/plugin-sdk/ui";
-import { formatTime, refusal, type ActionView, type VmHostView } from "./api";
+import { formatTime, refusal, type ActionView } from "./api";
 
-export function RecordView({ hosts }: { hosts: VmHostView[] }) {
+export function RecordView() {
   const { t } = useTranslation();
+  const me = useCurrentUser();
   const api = usePluginApi();
   const [actions, setActions] = useState<ActionView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -18,8 +23,12 @@ export function RecordView({ hosts }: { hosts: VmHostView[] }) {
       .catch((failure) => setError(refusal(failure).error));
   }, [api]);
 
-  const hostName = (hostId: number) =>
-    hosts.find((host) => host.hostId === hostId)?.name ?? `#${hostId}`;
+  // HAW can't read other users' names (no users:read): the person's own
+  // actions say "you", others a short form of the user's id.
+  const who = (userId: string) =>
+    me?.userId === userId
+      ? t("record.you")
+      : t("record.other", { id: userId.slice(0, 8) });
 
   if (error) return <p className="p-4 text-sm text-destructive">{error}</p>;
   if (actions && actions.length === 0)
@@ -36,14 +45,14 @@ export function RecordView({ hosts }: { hosts: VmHostView[] }) {
             {action.action}
           </ListBadge>
           <span>
-            {hostName(action.hostId)}
+            {action.hostName}
             {action.vmName ? ` / ${action.vmName}` : ""}
             {action.force ? " (force)" : ""}
           </span>
           <span className="text-xs text-muted-foreground">
             {t("record.line", {
               time: formatTime(action.at),
-              user: action.userId,
+              user: who(action.userId),
               action: action.action,
             })}
           </span>

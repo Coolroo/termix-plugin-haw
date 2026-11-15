@@ -119,7 +119,7 @@ export function createHawTab(app: TermixApp) {
           leading={<BackButton onClick={() => setView({ kind: "hosts" })} />}
           scroll
         >
-          <RecordView hosts={hosts ?? []} />
+          <RecordView />
         </PanelShell>
       );
     }

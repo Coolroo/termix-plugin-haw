@@ -480,7 +480,14 @@ export function registerRoutes(
       const { row } = await vmHostFor(req);
       const vmId = String(req.params.vmId ?? "");
       if (!VM_ID.test(vmId)) throw new InputError("not a VM id", 400);
-      const { consoleHostId } = body(req);
+      const { consoleHostId, vmName: named } = body(req);
+      // The VM's name, for the record only: links are by the VM's id.
+      if (
+        named !== undefined &&
+        (typeof named !== "string" || !VM_NAME.test(named))
+      ) {
+        throw new InputError("vmName must be a VM name", 400);
+      }
       if (consoleHostId !== null) {
         if (
           !Number.isInteger(consoleHostId) ||
@@ -502,11 +509,17 @@ export function registerRoutes(
         userId: actor(),
         hostId: row.hostId,
         action: consoleHostId === null ? "unlink-console" : "link-console",
-        vmName: vmId,
+        vmName: (named as string | undefined) ?? vmId,
         force: false,
         ok: true,
         code: null,
         message: null,
+      });
+      await audit(req, {
+        action: consoleHostId === null ? "unlink-console" : "link-console",
+        hostId: row.hostId,
+        vm: (named as string | undefined) ?? vmId,
+        ok: true,
       });
       return { consoleHostId };
     }),
@@ -523,10 +536,14 @@ export function registerRoutes(
         throw new InputError("hostId must be a number", 400);
       }
       const limit = Math.min(Number(req.query.limit) || 50, MAX_ACTIONS);
-      const visible = new Set((await ctx.hosts.list()).map((host) => host.id));
+      // Names of the hosts the person can see, also for a host that is no
+      // VM host (a failed add, a removed host).
+      const names = new Map(
+        (await ctx.hosts.list()).map((host) => [host.id, host.name || host.ip]),
+      );
       return (await store.listActions({ hostId, limit }))
-        .filter((action) => visible.has(action.hostId))
-        .map((action) => ({ ...action }));
+        .filter((action) => names.has(action.hostId))
+        .map((action) => ({ ...action, hostName: names.get(action.hostId)! }));
     }),
   );
 }

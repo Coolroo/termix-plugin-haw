@@ -61,6 +61,8 @@ export interface ActionView {
   at: string;
   userId: string;
   hostId: number;
+  /** The Termix host's name as the person sees it. */
+  hostName: string;
   action: string;
   vmName: string | null;
   force: boolean;
