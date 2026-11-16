@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const root = new URL("..", import.meta.url);
-const files = { "hyper-v": ["vmctl.ps1", "install.ps1"] };
+const files = { "hyper-v": ["vmctl.ps1", "vmctl-worker.ps1", "install.ps1"] };
 const dirs = { "hyper-v": "vmctl/hyperv" };
 
 const sha = (path) =>

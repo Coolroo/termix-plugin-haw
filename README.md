@@ -12,7 +12,7 @@
 
 Hundred Acre Wood (HAW, the HAW VM Manager) is a [Termix](https://github.com/Termix-SSH/Termix) plugin. You add any Termix host as a VM host and choose its interface (Hyper-V in 1.0). HAW then lists the host's VMs and starts, stops and restarts them, and opens their consoles through the Remote Desktop plugin.
 
-HAW can't run a command of its choosing on a host. Each host has a small script, `vmctl`, that sshd forces for an account with the hypervisor's rights and nothing else. HAW sends it one JSON request at a time. The host keeps its own limits, in a file HAW can't change: which VMs HAW may act on, which VMs it may never stop, and how much CPU and memory running VMs may take.
+HAW can't run a command of its choosing on a host. Each host has a small script, `vmctl`, that sshd forces for an account with no rights of its own; on Hyper-V a worker task that runs as SYSTEM checks each request again and does the work. HAW sends it one JSON request at a time. The host keeps its own limits, in a file HAW can't change: which VMs HAW may act on, which VMs it may never stop, and how much CPU and memory running VMs may take.
 
 Read the [docs](docs/index.md) to set it up and use it.
 

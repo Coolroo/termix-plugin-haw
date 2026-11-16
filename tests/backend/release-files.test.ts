@@ -15,13 +15,20 @@ describe("the files a host's setup downloads", () => {
     expect(RELEASE_FILES["hyper-v"]["vmctl.ps1"]).toBe(
       sha("vmctl/hyperv/vmctl.ps1"),
     );
+    expect(RELEASE_FILES["hyper-v"]["vmctl-worker.ps1"]).toBe(
+      sha("vmctl/hyperv/vmctl-worker.ps1"),
+    );
     expect(RELEASE_FILES["hyper-v"]["install.ps1"]).toBe(
       sha("vmctl/hyperv/install.ps1"),
     );
   });
 
   it("are LF only, so a checkout and a download hash the same", () => {
-    for (const file of ["vmctl/hyperv/vmctl.ps1", "vmctl/hyperv/install.ps1"]) {
+    for (const file of [
+      "vmctl/hyperv/vmctl.ps1",
+      "vmctl/hyperv/vmctl-worker.ps1",
+      "vmctl/hyperv/install.ps1",
+    ]) {
       expect(
         readFileSync(new URL(`../../${file}`, import.meta.url), "utf8"),
       ).not.toContain("\r");
@@ -34,6 +41,9 @@ describe("the files a host's setup downloads", () => {
     expect(script).toContain(RELEASE_FILES["hyper-v"]["install.ps1"]);
     expect(script).toContain(
       `-Sha256 '${RELEASE_FILES["hyper-v"]["vmctl.ps1"]}'`,
+    );
+    expect(script).toContain(
+      `-WorkerSha256 '${RELEASE_FILES["hyper-v"]["vmctl-worker.ps1"]}'`,
     );
     expect(script.indexOf("Get-FileHash")).toBeLessThan(
       script.indexOf("& (Join-Path"),

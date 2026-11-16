@@ -72,7 +72,7 @@
       "key": "In Termix, open Credentials, add an SSH key credential named after the machine (for example vmctl-hv1), press Generate Key Pair (ed25519), save it, and copy its public key.",
       "host": "Add a Termix host for the machine: its address, port 22, user vmctl, and that credential for login. The account can only run vmctl, so HAW is its only use.",
       "hostKey": "Store the host key: open an SSH terminal to the new host once, compare the fingerprint it shows with the one the machine prints for ssh-keygen -lf C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub, and accept it. The login itself fails until the next step.",
-      "install": "On the machine, in PowerShell as administrator, run these lines. Put the public key in place of the text PASTE THE PUBLIC KEY HERE, and list the VMs HAW must never stop in -Protected. The script checks each file's SHA-256 and changes sshd_config only through sshd -t.",
+      "install": "On the machine, in PowerShell as administrator, run these lines. Put the public key in place of the text PASTE THE PUBLIC KEY HERE, and list the VMs HAW must never stop in -Protected. The script checks each file's SHA-256, makes the vmctl account (a plain user) and the SYSTEM task haw-vmctl-worker that does the Hyper-V work, and changes sshd_config only through sshd -t.",
       "protect": "To change the protect list, the name pattern or the ceilings later, run install.ps1 again with -ReplaceConfig, or edit C:\\ProgramData\\haw\\vmctl.json as administrator. HAW can't change them.",
       "check": "Back here, choose the host and Hyper-V, and press Check."
     }

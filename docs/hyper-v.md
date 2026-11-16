@@ -10,14 +10,22 @@ download lines and hashes, when **Check** finds no vmctl.
 Run as administrator, it checks each part and changes only what differs; a
 second run changes nothing. `-WhatIf` only says what it would change.
 
-- Checks the SHA-256 of `vmctl.ps1` against `-Sha256` and refuses a file that
-  differs. Copies it to `C:\ProgramData\haw`, a folder that SYSTEM and
-  Administrators can change and the vmctl account can only read.
+- Checks the SHA-256 of `vmctl.ps1` against `-Sha256` and of
+  `vmctl-worker.ps1` against `-WorkerSha256`, and refuses a file that differs.
+  Copies both to `C:\ProgramData\haw`, a folder that SYSTEM and Administrators
+  can change. The vmctl account can run `vmctl.ps1` and nothing else there.
+- Makes the queue folder `C:\ProgramData\haw\queue`, where the account may
+  only add a request file and read its reply, and registers the task
+  `haw-vmctl-worker`: it runs `vmctl-worker.ps1` as SYSTEM, and the account
+  may only start it. See [DESIGN.md](../vmctl/hyperv/DESIGN.md) for why and
+  for the exact access lists.
 - Writes `C:\ProgramData\haw\vmctl.json` from its parameters, only when there
   is none (or with `-ReplaceConfig`).
 - Makes the local account `vmctl` (`-Account`) with a random password that is
-  never shown or kept, in _Hyper-V Administrators_ only. It stops if the
-  account is in any other group.
+  never shown or kept, in Users only. It stops if the account is in
+  Administrators, and takes it out of Hyper-V Administrators if an older setup
+  put it there: Windows refuses Hyper-V to a non-admin key login anyway, and
+  the worker does that work.
 - Writes the account's key file, `C:\ProgramData\ssh\haw-vmctl_authorized_keys`
   (SYSTEM and Administrators only), from `-PublicKey`.
 - Adds a marked block at the end of `sshd_config`:
@@ -46,8 +54,9 @@ second run changes nothing. `-WhatIf` only says what it would change.
 | ---------------------------------- | ------------------------ | ------------------------------------------------------------------------ |
 | `-PublicKey`                       |                          | The `ssh-ed25519 ...` line of the Termix credential HAW logs in with     |
 | `-Sha256`                          |                          | The SHA-256 of `vmctl.ps1` this HAW version released (HAW shows it)      |
+| `-WorkerSha256`                    |                          | The SHA-256 of `vmctl-worker.ps1` (HAW shows it)                         |
 | `-Account`                         | `vmctl`                  | The local account                                                        |
-| `-Source`                          | the script's folder      | Where `vmctl.ps1` is                                                     |
+| `-Source`                          | the script's folder      | Where `vmctl.ps1` and `vmctl-worker.ps1` are                             |
 | `-NamePattern`                     | `^[a-z][a-z0-9-]{0,62}$` | VMs HAW may act on                                                       |
 | `-Protected`                       | none                     | Names or wildcards of VMs HAW may start but never stop                   |
 | `-CeilingCpus`, `-CeilingMemoryMB` | none                     | The most that running VMs may have together                              |
@@ -65,8 +74,9 @@ writes it.
 
 ## Notes
 
-- A graceful **Shut down** needs the guest's shutdown integration service. vmctl
-  waits up to 90 seconds and then answers with the state at that moment.
+- A graceful **Shut down** needs the guest's shutdown integration service. The worker
+  waits up to 80 seconds (60 for a restart) and then answers with the state at
+  that moment. Each call also takes a second or two to start the worker task.
 - `console-info` gives the machine's name (or `-ConsoleHost`), port 2179 and the
   VM's id. The Remote Desktop plugin connects with VMConnect, which needs a
   Windows login on the machine that may use Hyper-V.

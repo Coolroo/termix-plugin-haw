@@ -38,9 +38,9 @@ export function hypervInstallScript(version: string): string {
     `$base = '${REPO_RAW}/v${version}/vmctl/hyperv'`,
     "$d = Join-Path $env:TEMP 'haw-vmctl'",
     "New-Item -ItemType Directory -Force $d | Out-Null",
-    "foreach ($f in 'vmctl.ps1', 'install.ps1') { Invoke-WebRequest \"$base/$f\" -OutFile (Join-Path $d $f) -UseBasicParsing }",
+    "foreach ($f in 'vmctl.ps1', 'vmctl-worker.ps1', 'install.ps1') { Invoke-WebRequest \"$base/$f\" -OutFile (Join-Path $d $f) -UseBasicParsing }",
     `if ((Get-FileHash (Join-Path $d 'install.ps1')).Hash -ne '${files["install.ps1"]}') { throw 'install.ps1 is not the released file' }`,
-    `& (Join-Path $d 'install.ps1') -Sha256 '${files["vmctl.ps1"]}' -PublicKey 'PASTE THE PUBLIC KEY HERE' -Protected @()`,
+    `& (Join-Path $d 'install.ps1') -Sha256 '${files["vmctl.ps1"]}' -WorkerSha256 '${files["vmctl-worker.ps1"]}' -PublicKey 'PASTE THE PUBLIC KEY HERE' -Protected @()`,
   ].join("\n");
 }
 

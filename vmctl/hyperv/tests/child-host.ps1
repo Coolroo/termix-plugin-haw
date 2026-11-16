@@ -1,7 +1,13 @@
-# Runs vmctl.ps1 as sshd would (a process of its own, the request on standard
-# input), with stand-ins for the Hyper-V commands, so that the tests can check
-# standard output, standard error and the exit code. Tests only.
-param([string]$Script, [string]$ConfigPath)
+# Runs the front (vmctl.ps1) as sshd would (a process of its own, the request on
+# standard input), with the worker run in place of the scheduled task and
+# stand-ins for the Hyper-V commands, so that the tests can check standard
+# output, standard error and the exit code. Tests only.
+#   -Mode answer: the "task" runs the worker; fail: it can't be started;
+#   silent: it never answers.
+param([string]$Front, [string]$Worker, [string]$QueueDir, [string]$ConfigPath, [string]$Mode = 'answer', [int]$Timeout = 5)
+
+. $Worker
+. $Front
 
 function global:Get-VM {
     [CmdletBinding()] param([string[]]$Name)
@@ -18,5 +24,13 @@ function global:Get-VMNetworkAdapter {
     [pscustomobject]@{ IPAddresses = @('192.0.2.10', 'fe80::1'); SwitchName = 'LAN'; MacAddress = '00155D010203' }
 }
 
-& $Script -ConfigPath $ConfigPath
-exit $LASTEXITCODE
+function Start-WorkerTask {
+    param([string]$Job)
+    switch ($Mode) {
+        'answer' { $null = Invoke-WorkerJob -Job $Job -QueueDir $QueueDir -ConfigPath $ConfigPath }
+        'fail' { throw 'Access is denied. (Exception from HRESULT: 0x80070005)' }
+        default { }
+    }
+}
+
+Invoke-FrontMain -QueueDir $QueueDir -TimeoutSeconds $Timeout

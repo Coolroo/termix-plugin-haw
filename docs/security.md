@@ -10,15 +10,22 @@ or changes a VM, or that changes the host.
 - **One command.** The account HAW logs in as has `ForceCommand` in sshd: sshd
   runs vmctl whatever HAW sends. No shell, no terminal (`PermitTTY no`), no
   port forwarding, no agent forwarding, no sftp.
-- **One set of rights.** On Hyper-V the account is a member of _Hyper-V
-  Administrators_ and of no admin group. Its password is random, made on the
-  machine and never shown; it logs in with a key only.
+- **No rights of its own.** On Hyper-V the account is a plain user (Users
+  only). Its password is random, made on the machine and never shown; it logs
+  in with a key only. It can drop a request into a queue folder and start one
+  task, `haw-vmctl-worker`, which runs as SYSTEM. The worker is the trust
+  boundary: it checks the whole request again, with the host's limits, and
+  only then runs the Hyper-V command. Windows refuses Hyper-V to a non-admin
+  account that logs in over SSH with a key, so this split is what keeps the
+  account out of Administrators. The task takes only a job id (a GUID) as its
+  argument; the worker refuses anything else.
 - **Data, never code.** The request is JSON on standard input. vmctl reads VM
   names as data and passes them to the hypervisor as parameter values; a name
   with a wildcard is refused before any lookup.
 - **The host's own limits.** The allow pattern, the protect list and the
-  ceilings live in a file on the host that the vmctl account can read and not
-  write. vmctl checks them on every request, whatever HAW thinks.
+  ceilings live in a file on the host that only the worker reads and only
+  administrators can change. The worker checks them on every request, whatever
+  HAW thinks.
 
 ## What HAW keeps
 

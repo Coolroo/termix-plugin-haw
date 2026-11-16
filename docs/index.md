@@ -13,8 +13,10 @@ later versions.
 
 HAW never runs a command of its choosing on a host. On each VM host, a small
 script, **vmctl**, is the only thing HAW can run: sshd forces it for an
-account that HAW logs in as, and that account has the hypervisor's rights and
-no others. HAW sends one JSON request and reads one JSON reply. The host keeps
+account that HAW logs in as, and that account has no rights of its own. On
+Hyper-V, vmctl hands each request to a worker task that runs as SYSTEM and
+checks it again before it acts ([Hyper-V hosts](hyper-v.md)). HAW sends one
+JSON request and reads one JSON reply. The host keeps
 its own limits in a file HAW can't change: which VM names HAW may act on, a
 protect list of VMs that are never stopped from HAW, and ceilings for CPUs and
 memory.

@@ -1,558 +1,155 @@
-# Pester 5 tests for vmctl.ps1. They run on Linux pwsh: the Hyper-V and Windows
-# commands are stand-in functions that each test mocks. What only a real
-# Hyper-V host proves (the cmdlets' own behaviour, Windows PowerShell 5.1's
-# console, sshd) is for the host's own check after install.ps1.
+# Pester 5 tests for vmctl.ps1, the front: the vmctl account's forced command.
+# It hands the line to the worker through the queue and prints the reply. The
+# scheduled task is mocked (Start-WorkerTask); some tests run the real worker in
+# its place. What only Windows proves (that the plain account may Run() the task,
+# the COM call itself) is in DESIGN.md.
 
 BeforeAll {
     $script:Here = Split-Path -Parent $PSCommandPath
-    $script:Src = Join-Path (Split-Path -Parent $script:Here) 'vmctl.ps1'
+    $script:Dir = Split-Path -Parent $script:Here
+    $script:Src = Join-Path $script:Dir 'vmctl.ps1'
+    $script:WorkerSrc = Join-Path $script:Dir 'vmctl-worker.ps1'
 
-    # Stand-ins for the commands that only Windows with Hyper-V has, so that Pester can mock them.
     function global:Get-VM { [CmdletBinding()] param([string[]]$Name) }
-    function global:Start-VM { [CmdletBinding(SupportsShouldProcess = $true)] param([object[]]$VM, [string[]]$Name, [switch]$AsJob, [switch]$Passthru) }
-    function global:Stop-VM { [CmdletBinding(SupportsShouldProcess = $true)] param([object[]]$VM, [string[]]$Name, [switch]$Force, [switch]$TurnOff, [switch]$Save, [switch]$AsJob, [switch]$Passthru) }
-    function global:Restart-VM { [CmdletBinding(SupportsShouldProcess = $true)] param([object[]]$VM, [string[]]$Name, [switch]$Force, [switch]$AsJob, [switch]$Passthru) }
     function global:Get-VMNetworkAdapter { [CmdletBinding()] param([object[]]$VM) }
-    function global:Get-VMHardDiskDrive { [CmdletBinding()] param([object[]]$VM) }
-    function global:Get-VHD { [CmdletBinding()] param([string[]]$Path) }
-    function global:Get-VMSnapshot { [CmdletBinding()] param([object[]]$VM) }
-    function global:Get-VMHost { [CmdletBinding()] param() }
-    function global:Get-VMSwitch { [CmdletBinding()] param() }
-    if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) {
-        function global:Get-CimInstance { [CmdletBinding()] param([string]$ClassName) }
-    }
 
+    # The worker first, then the front: the front's functions are the ones under test.
+    . $script:WorkerSrc
     . $script:Src
 
-    function script:New-FakeVm {
-        param([string]$Name, [string]$State = 'Off', [int]$Cpus = 2, [long]$StartupMB = 4096, [long]$AssignedMB = 0, [int]$UptimeSeconds = 0)
-        [pscustomobject]@{
-            Name = $Name; Id = [guid]::NewGuid(); State = $State; ProcessorCount = $Cpus
-            MemoryStartup = $StartupMB * 1MB; MemoryAssigned = $AssignedMB * 1MB
-            Uptime = [timespan]::FromSeconds($UptimeSeconds); Generation = 2; Notes = 'a test VM'
-        }
+    function script:Invoke-Line {
+        param([string]$Line, [int]$Timeout = 5)
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Line + "`n")
+        return (Invoke-FrontRequest -Stream (New-Object IO.MemoryStream(, $bytes)) -QueueDir $script:Queue -TimeoutSeconds $Timeout)
     }
-    function script:Set-Config {
-        param([string]$Text)
-        [IO.File]::WriteAllText($script:Cfg, $Text)
-    }
-    # One request through the whole path (JSON in, JSON out). The raw line is in $script:Json.
-    function script:Send {
-        param([string]$Verb, [hashtable]$Arguments = @{}, [string]$Config = $script:Cfg)
-        $line = ConvertTo-Json -Compress -Depth 5 -InputObject ([ordered]@{ haw = 'vmctl'; v = 1; id = 't-1'; verb = $Verb; args = $Arguments })
-        return (Send-Line $line $Config)
-    }
-    function script:Send-Line {
-        param([string]$Line, [string]$Config = $script:Cfg)
-        $script:Json = Get-VmctlReplyJson -Line $Line -ConfigPath $Config
-        return (ConvertFrom-Json -InputObject $script:Json)
-    }
-    $script:GoodConfig = '{"namePattern":"^[a-z][a-z0-9-]{0,62}$","protected":["build-*","Lab-?","lit[1]"],"ceilings":{"cpus":16,"memoryMB":16384,"diskGB":500},"console":{"host":"hv1.example.lan","port":2179}}'
+    $script:GuidPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 }
 
 Describe 'the file itself' {
     It 'is ASCII only, so Windows PowerShell 5.1 reads it the same without a BOM' {
         @([IO.File]::ReadAllBytes($script:Src) | Where-Object { $_ -gt 127 }).Count | Should -Be 0
     }
-    It 'parses with no errors' {
-        $errors = $null
-        [void][Management.Automation.Language.Parser]::ParseFile($script:Src, [ref]$null, [ref]$errors)
-        $errors.Count | Should -Be 0
-    }
-    It 'uses no syntax that Windows PowerShell 5.1 lacks (?:, ??, ?., &&, ||, -AsHashtable)' {
+    It 'parses with no errors, and uses no syntax that Windows PowerShell 5.1 lacks' {
         $tokens = $null; $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($script:Src, [ref]$tokens, [ref]$errors)
+        $errors.Count | Should -Be 0
         @($ast.FindAll({ param($n) $n.GetType().Name -in @('TernaryExpressionAst', 'PipelineChainAst') }, $true)).Count | Should -Be 0
         @($tokens | Where-Object { $_.Kind -in @('QuestionQuestion', 'QuestionQuestionEquals', 'QuestionDot', 'QuestionLBracket') }).Count | Should -Be 0
-        (Get-Content -Raw $script:Src) | Should -Not -Match '-AsHashtable'
     }
-    It 'names no host, address or domain of a real network' {
-        $text = Get-Content -Raw $script:Src
-        $text | Should -Not -Match '\b(?:10|172|192)\.\d+\.\d+\.\d+\b'
+    It 'calls no Hyper-V or WMI command: the account could not' {
+        $ast = [Management.Automation.Language.Parser]::ParseFile($script:Src, [ref]$null, [ref]$null)
+        $names = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() })
+        @($names | Where-Object { $_ -match '-VM|VHD|VMHost|VMSwitch|VMSnapshot|CimInstance|WmiObject' }).Count | Should -Be 0
+    }
+    It 'takes no parameter: the forced command gives none' {
+        $ast = [Management.Automation.Language.Parser]::ParseFile($script:Src, [ref]$null, [ref]$null)
+        @($ast.ParamBlock.Parameters).Count | Should -Be 0
     }
 }
 
 Describe 'vmctl.ps1' {
     BeforeEach {
+        $script:Queue = Join-Path $TestDrive ('q-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $null = New-Item -ItemType Directory -Path $script:Queue -Force
         $script:Cfg = Join-Path $TestDrive 'vmctl.json'
-        Set-Config $script:GoodConfig
-        $script:FakeVms = @(
-            (New-FakeVm 'web-2' 'Running' 2 2048 3072 3600),
-            (New-FakeVm 'web-1' 'Off' 2 4096),
-            (New-FakeVm 'build-1' 'Running' 4 8192 8192 60),
-            (New-FakeVm 'Big-VM' 'Off' 8 16384),
-            (New-FakeVm 'lab-3' 'Running' 1 1024 1024 10)
-        )
-        $script:Adapters = @{
-            'web-1' = @([pscustomobject]@{ IPAddresses = @('192.0.2.10', 'fe80::215:5dff:fe01:203'); SwitchName = 'LAN'; MacAddress = '00155D010203' })
-            'web-2' = @([pscustomobject]@{ IPAddresses = @('192.0.2.11', '2001:db8::11'); SwitchName = 'LAN'; MacAddress = '00155D010204' },
-                [pscustomobject]@{ IPAddresses = @(); SwitchName = $null; MacAddress = '00155D010205' })
+        [IO.File]::WriteAllText($script:Cfg, '{}')
+        $script:Jobs = @()
+        $script:Seen = @()
+        $script:Canned = '{"haw":"vmctl","v":1,"id":"a-1","ok":true,"result":{"vms":[]}}'
+        # The task: note the job, read its request, answer with the canned line.
+        Mock Start-WorkerTask {
+            $script:Jobs += $Job
+            $script:Seen += [IO.File]::ReadAllText((Join-Path $script:Queue ($Job + '.req')))
+            [IO.File]::WriteAllText((Join-Path $script:Queue ($Job + '.rep')), $script:Canned + "`n")
         }
-        Mock Get-VM { $script:FakeVms }
-        Mock Get-VMNetworkAdapter { $a = $script:Adapters[[string]$VM[0].Name]; if ($a) { $a } }
-        Mock Get-VMHardDiskDrive { [pscustomobject]@{ Path = 'C:\vms\disk.vhdx' } }
-        Mock Get-VHD { [pscustomobject]@{ Size = 40GB; FileSize = 12.5GB } }
-        Mock Get-VMSnapshot { [pscustomobject]@{ Name = 'a' }; [pscustomobject]@{ Name = 'b' } }
-        Mock Get-VMHost { [pscustomobject]@{ LogicalProcessorCount = 16; MemoryCapacity = 64GB } }
-        Mock Get-CimInstance { [pscustomobject]@{ FreePhysicalMemory = 20971520 } }
-        Mock Get-PSDrive { [pscustomobject]@{ Name = 'C'; Used = 520GB; Free = 410GB }; [pscustomobject]@{ Name = 'E'; Used = $null; Free = $null } }
-        Mock Get-VMSwitch { [pscustomobject]@{ Name = 'LAN'; SwitchType = 'External' } }
-        Mock Start-VM { $VM[0].State = 'Running'; $VM[0].MemoryAssigned = $VM[0].MemoryStartup }
-        Mock Stop-VM { $VM[0].State = 'Off'; [pscustomobject]@{ Kind = 'job' } }
-        Mock Restart-VM { }
-        Mock Wait-VmJob { [pscustomobject]@{ Done = $true; Error = $null } }
+        Mock Write-FrontLog { }
         Mock Write-VmctlLog { }
     }
 
-    Context 'the request' {
-        It 'refuses text that is not JSON, with id null' {
-            $r = Send-Line 'this is not json'
-            $r.ok | Should -BeFalse
-            $r.error.code | Should -Be 'bad-request'
-            $r.id | Should -BeNullOrEmpty
-            $script:Json | Should -Match '"id":null'
-        }
-        It 'refuses JSON that is not an object' {
-            (Send-Line '[1,2]').error.code | Should -Be 'bad-request'
-            (Send-Line '"list"').error.code | Should -Be 'bad-request'
-            (Send-Line 'null').error.code | Should -Be 'bad-request'
-        }
-        It 'refuses a missing or wrong haw, and echoes a good id' {
-            $r = Send-Line '{"v":1,"id":"abc-1","verb":"list","args":{}}'
-            $r.error.code | Should -Be 'bad-request'
-            $r.id | Should -Be 'abc-1'
-            (Send-Line '{"haw":"other","v":1,"id":"abc-1","verb":"list","args":{}}').error.code | Should -Be 'bad-request'
-            (Send-Line '{"haw":"VMCTL","v":1,"id":"abc-1","verb":"list","args":{}}').error.code | Should -Be 'bad-request'
-        }
-        It 'refuses a missing or bad id, and answers with id null' -TestCases @(
-            @{ Id = $null }, @{ Id = '' }, @{ Id = 'has space' }, @{ Id = 'a_b' }, @{ Id = ('x' * 65) }, @{ Id = 5 }
-        ) {
-            $req = [ordered]@{ haw = 'vmctl'; v = 1; verb = 'list'; args = @{} }
-            if ($null -ne $Id) { $req['id'] = $Id }
-            $r = Send-Line (ConvertTo-Json -Compress -InputObject $req)
-            $r.error.code | Should -Be 'bad-request'
-            $script:Json | Should -Match '"id":null'
-        }
-        It 'takes an id of 64 characters' {
-            (Send-Line ('{"haw":"vmctl","v":1,"id":"' + ('a' * 64) + '","verb":"list","args":{}}')).ok | Should -BeTrue
-        }
-        It 'refuses a v that is not an integer' -TestCases @(@{ V = '"1"' }, @{ V = '1.5' }, @{ V = 'true' }, @{ V = 'null' }) {
-            (Send-Line ('{"haw":"vmctl","v":' + $V + ',"id":"a","verb":"list","args":{}}')).error.code | Should -Be 'bad-request'
-        }
-        It 'answers another v with code version and the versions it speaks' {
-            $r = Send-Line '{"haw":"vmctl","v":2,"id":"a","verb":"list","args":{},"future":true}'
-            $r.error.code | Should -Be 'version'
-            $r.v | Should -Be 1
-            $r.id | Should -Be 'a'
-            $script:Json | Should -Match '"versions":\[1\]'
-        }
-        It 'refuses an unknown field' {
-            (Send-Line '{"haw":"vmctl","v":1,"id":"a","verb":"list","args":{},"extra":1}').error.code | Should -Be 'bad-request'
-        }
-        It 'refuses a missing or wrong verb or args' {
-            (Send-Line '{"haw":"vmctl","v":1,"id":"a","args":{}}').error.code | Should -Be 'bad-request'
-            (Send-Line '{"haw":"vmctl","v":1,"id":"a","verb":7,"args":{}}').error.code | Should -Be 'bad-request'
-            (Send-Line '{"haw":"vmctl","v":1,"id":"a","verb":"list"}').error.code | Should -Be 'bad-request'
-            (Send-Line '{"haw":"vmctl","v":1,"id":"a","verb":"list","args":[]}').error.code | Should -Be 'bad-request'
-            (Send-Line '{"haw":"vmctl","v":1,"id":"a","verb":"list","args":"x"}').error.code | Should -Be 'bad-request'
-        }
-        It 'answers unknown-verb for a verb that is not in the protocol' {
-            (Send 'format-disk').error.code | Should -Be 'unknown-verb'
-            (Send 'LIST').error.code | Should -Be 'unknown-verb'
-        }
-        It 'answers not-in-this-version for <Verb>, whatever its args' -TestCases @(
-            @{ Verb = 'create' }, @{ Verb = 'delete' }, @{ Verb = 'snapshot' }, @{ Verb = 'restore' }, @{ Verb = 'users' }
-        ) {
-            $r = Send $Verb @{ name = 'web-1'; anything = 1 }
-            $r.error.code | Should -Be 'not-in-this-version'
-            Should -Invoke Get-VM -Times 0
-        }
-        It 'refuses an unknown argument' {
-            (Send 'list' @{ all = $true }).error.code | Should -Be 'bad-request'
-            (Send 'show' @{ name = 'web-1'; deep = $true }).error.code | Should -Be 'bad-request'
-            (Send 'show' @{ Name = 'web-1' }).error.code | Should -Be 'bad-request'
-        }
-        It 'refuses an argument of the wrong type' {
-            (Send 'show' @{ name = 5 }).error.code | Should -Be 'bad-request'
-            (Send 'stop' @{ name = 'web-2'; force = 'yes' }).error.code | Should -Be 'bad-request'
-            (Send 'stop' @{ name = 'web-2'; force = 1 }).error.code | Should -Be 'bad-request'
-            Should -Invoke Stop-VM -Times 0
-        }
-        It 'refuses a missing name' {
-            (Send 'show').error.code | Should -Be 'bad-request'
-            (Send 'start' @{ name = '' }).error.code | Should -Be 'bad-request'
-        }
-        It 'refuses the name <Name> before it asks Hyper-V anything' -TestCases @(
-            @{ Name = 'web-*' }, @{ Name = 'web-?' }, @{ Name = 'web-[1]' }, @{ Name = '*' }, @{ Name = 'a`b' }, @{ Name = "web-1`n" }
-        ) {
-            foreach ($verb in 'show', 'start', 'stop', 'restart', 'console-info') {
-                (Send $verb @{ name = $Name }).error.code | Should -Be 'bad-request'
-            }
-            Should -Invoke Get-VM -Times 0
-        }
-        It 'never gives Get-VM a -Name' {
-            $null = Send 'show' @{ name = 'web-1' }
-            $null = Send 'start' @{ name = 'web-1' }
-            Should -Invoke Get-VM -ParameterFilter { $PSBoundParameters.ContainsKey('Name') } -Times 0
-        }
+    It 'writes the line as it came to queue\<guid>.req, starts the task with that GUID, and gives the reply' {
+        $line = '{"haw":"vmctl","v":1,"id":"a-1","verb":"list","args":{}}'
+        Invoke-Line $line | Should -BeExactly $script:Canned
+        $script:Jobs.Count | Should -Be 1
+        $script:Jobs[0] | Should -MatchExactly $script:GuidPattern
+        $script:Seen[0] | Should -BeExactly ($line + "`n")
     }
-
-    Context 'reading standard input' {
-        It 'reads up to the first newline, without CR and BOM' {
-            $bytes = [byte[]](0xEF, 0xBB, 0xBF) + [Text.Encoding]::UTF8.GetBytes("{`"a`":1}`r`nmore after the line")
-            $r = Read-RequestLine -Stream (New-Object IO.MemoryStream(, $bytes))
-            $r.Problem | Should -BeNullOrEmpty
-            $r.Text | Should -BeExactly '{"a":1}'
-        }
-        It 'takes a line without a newline at the end of input' {
-            (Read-RequestLine -Stream (New-Object IO.MemoryStream(, [Text.Encoding]::UTF8.GetBytes('{}')))).Text | Should -Be '{}'
-        }
-        It 'refuses an empty request' {
-            (Read-RequestLine -Stream (New-Object IO.MemoryStream(, [byte[]]@(10)))).Problem | Should -Match 'empty'
-        }
-        It 'refuses a request longer than 64 KB, and takes one of 64 KB' {
-            $big = [Text.Encoding]::ASCII.GetBytes(('x' * 65537) + "`n")
-            (Read-RequestLine -Stream (New-Object IO.MemoryStream(, $big))).Problem | Should -Match '64 KB'
-            $ok = [Text.Encoding]::ASCII.GetBytes(('x' * 65536) + "`n")
-            (Read-RequestLine -Stream (New-Object IO.MemoryStream(, $ok))).Problem | Should -BeNullOrEmpty
-        }
-        It 'refuses bytes that are not UTF-8' {
-            (Read-RequestLine -Stream (New-Object IO.MemoryStream(, [byte[]](0x7B, 0xFF, 0x7D, 10)))).Problem | Should -Match 'UTF-8'
-        }
-        It 'turns a read problem into bad-request' {
-            $r = ConvertFrom-Json (Get-VmctlReplyJson -Line $null -ReadProblem 'the request is longer than 64 KB' -ConfigPath $script:Cfg)
-            $r.error.code | Should -Be 'bad-request'
-        }
+    It 'names the file with a new GUID, never with the request id' {
+        $id = [guid]::NewGuid().ToString()
+        $null = Invoke-Line ('{"haw":"vmctl","v":1,"id":"' + $id + '","verb":"list","args":{}}')
+        $null = Invoke-Line ('{"haw":"vmctl","v":1,"id":"' + $id + '","verb":"list","args":{}}')
+        $script:Jobs[0] | Should -Not -Be $id
+        $script:Jobs[1] | Should -Not -Be $script:Jobs[0]
     }
-
-    Context 'the config file' {
-        It 'answers info with configProblem and every other verb with config when the file is missing' {
-            $missing = Join-Path $TestDrive 'none.json'
-            $r = Send 'info' -Config $missing
-            $r.ok | Should -BeTrue
-            $r.result.configProblem | Should -Match 'missing'
-            $r.result.limits | Should -BeNullOrEmpty
-            foreach ($verb in 'list', 'show', 'start', 'stop', 'restart', 'console-info') {
-                $a = @{}
-                if ($verb -ne 'list') { $a = @{ name = 'web-1' } }
-                (Send $verb $a -Config $missing).error.code | Should -Be 'config'
-            }
-            Should -Invoke Start-VM -Times 0
-            Should -Invoke Stop-VM -Times 0
-        }
-        It 'finds the problem in <Why>' -TestCases @(
-            @{ Why = 'text that is not JSON'; Text = 'namePattern = x' },
-            @{ Why = 'a list at the top'; Text = '[]' },
-            @{ Why = 'an unknown field'; Text = '{"protect":["build-*"]}' },
-            @{ Why = 'a pattern that does not compile'; Text = '{"namePattern":"([a-z"}' },
-            @{ Why = 'an empty pattern'; Text = '{"namePattern":""}' },
-            @{ Why = 'protected as one string'; Text = '{"protected":"build-*"}' },
-            @{ Why = 'protected with a number'; Text = '{"protected":["a",1]}' },
-            @{ Why = 'a ceiling of 0'; Text = '{"ceilings":{"cpus":0}}' },
-            @{ Why = 'a ceiling as text'; Text = '{"ceilings":{"memoryMB":"8G"}}' },
-            @{ Why = 'an unknown ceiling'; Text = '{"ceilings":{"gpus":1}}' },
-            @{ Why = 'console port 0'; Text = '{"console":{"port":0}}' },
-            @{ Why = 'console host with a space'; Text = '{"console":{"host":"hv 1"}}' }
-        ) {
-            Set-Config $Text
-            (Send 'info').result.configProblem | Should -Not -BeNullOrEmpty
-            (Send 'list').error.code | Should -Be 'config'
-        }
-        It 'takes the defaults for what an empty object leaves out' {
-            Set-Config '{}'
-            $r = Send 'info'
-            $r.result.configProblem | Should -BeNullOrEmpty
-            $r.result.limits.namePattern | Should -BeExactly '^[a-z][a-z0-9-]{0,62}$'
-            $script:Json | Should -Match '"protected":\[\]'
-            $script:Json | Should -Match '"ceilings":\{\}'
-            $c = (Send 'console-info' @{ name = 'web-1' }).result.console
-            $c.host | Should -Be ([Environment]::MachineName)
-            $c.port | Should -Be 2179
-        }
-        It 'reads the example config without a problem' {
-            $example = Join-Path (Split-Path -Parent $script:Here) 'vmctl.example.json'
-            (Send 'info' -Config $example).result.configProblem | Should -BeNullOrEmpty
-        }
+    It 'relays a line that is not JSON; the worker answers bad-request with id null' {
+        Mock Start-WorkerTask { $null = Invoke-WorkerJob -Job $Job -QueueDir $script:Queue -ConfigPath $script:Cfg }
+        $r = ConvertFrom-Json (Invoke-Line 'this is not json')
+        $r.error.code | Should -Be 'bad-request'
+        $r.id | Should -BeNullOrEmpty
+        Should -Invoke Start-WorkerTask -Times 1 -Exactly
     }
-
-    Context 'info' {
-        It 'gives host, backend, protocol, capacity, networks, verbs and limits' {
-            $r = (Send 'info').result
-            $r.host.name | Should -Be ([Environment]::MachineName)
-            $r.backend.kind | Should -Be 'hyper-v'
-            $r.backend.version | Should -Be '1.0.0'
-            $r.capacity.cpus | Should -Be 16
-            $r.capacity.memoryMB | Should -Be 65536
-            $r.capacity.freeMemoryMB | Should -Be 20480
-            $r.capacity.disks[0].name | Should -Be 'C:'
-            $r.capacity.disks[0].sizeGB | Should -Be 930
-            $r.capacity.disks[0].freeGB | Should -Be 410
-            $r.networks[0].kind | Should -BeExactly 'external'
-            $r.limits.ceilings.memoryMB | Should -Be 16384
-            $r.configProblem | Should -BeNullOrEmpty
-            $script:Json | Should -Match '"configProblem":null'
-            ($r.verbs -join ',') | Should -Be 'info,list,show,start,stop,restart,console-info'
-        }
-        It 'keeps one-element lists as lists' {
-            $null = Send 'info'
-            $script:Json | Should -Match '"versions":\[1\]'
-            $script:Json | Should -Match '"disks":\[\{"name":"C:"'
-            $script:Json | Should -Match '"networks":\[\{"name":"LAN"'
-        }
-        It 'gives empty lists as lists' {
-            Mock Get-VMSwitch { }
-            Mock Get-PSDrive { }
-            $null = Send 'info'
-            $script:Json | Should -Match '"networks":\[\]'
-            $script:Json | Should -Match '"disks":\[\]'
-        }
+    It 'relays a request the worker refuses, with the worker''s answer' {
+        Mock Start-WorkerTask { $null = Invoke-WorkerJob -Job $Job -QueueDir $script:Queue -ConfigPath $script:Cfg }
+        $r = ConvertFrom-Json (Invoke-Line '{"haw":"vmctl","v":1,"id":"a-2","verb":"show","args":{"name":"web-*"}}')
+        $r.error.code | Should -Be 'bad-request'
+        $r.id | Should -Be 'a-2'
     }
-
-    Context 'list' {
-        It 'gives every VM, sorted by name, with the protocol fields' {
-            $vms = @((Send 'list').result.vms)
-            ($vms | ForEach-Object { $_.name }) -join ',' | Should -Be 'Big-VM,build-1,lab-3,web-1,web-2'
-            $w2 = $vms | Where-Object { $_.name -eq 'web-2' }
-            $w2.state | Should -Be 'running'
-            $w2.cpus | Should -Be 2
-            $w2.memoryMB | Should -Be 3072
-            $w2.uptimeSeconds | Should -Be 3600
-            $w2.id | Should -Match '^[0-9a-f-]{36}$'
-            $w1 = $vms | Where-Object { $_.name -eq 'web-1' }
-            $w1.memoryMB | Should -Be 4096
-            $w1.state | Should -Be 'off'
-        }
-        It 'marks names outside the pattern and protected names (wildcards, no case)' {
-            $vms = @((Send 'list').result.vms)
-            ($vms | Where-Object { $_.name -eq 'Big-VM' }).allowed | Should -BeFalse
-            ($vms | Where-Object { $_.name -eq 'web-1' }).allowed | Should -BeTrue
-            ($vms | Where-Object { $_.name -eq 'build-1' }).protected | Should -BeTrue
-            ($vms | Where-Object { $_.name -eq 'lab-3' }).protected | Should -BeTrue
-            ($vms | Where-Object { $_.name -eq 'web-2' }).protected | Should -BeFalse
-        }
-        It 'leaves out link-local addresses and keeps one address a list' {
-            $null = Send 'list'
-            $script:Json | Should -Match '"name":"web-1"[^}]*"addresses":\["192\.0\.2\.10"\]'
-            $script:Json | Should -Match '"name":"web-2"[^}]*"addresses":\["192\.0\.2\.11","2001:db8::11"\]'
-            $script:Json | Should -Match '"name":"build-1"[^}]*"addresses":\[\]'
-        }
-        It 'gives an empty list and a one-VM list as lists' {
-            $script:FakeVms = @()
-            $null = Send 'list'
-            $script:Json | Should -Match '"vms":\[\]'
-            $script:FakeVms = @(New-FakeVm 'web-1')
-            $null = Send 'list'
-            $script:Json | Should -Match '"vms":\[\{"name":"web-1"'
-        }
-        It 'maps each Hyper-V state' -TestCases @(
-            @{ S = 'Running'; W = 'running' }, @{ S = 'Off'; W = 'off' }, @{ S = 'Paused'; W = 'paused' }, @{ S = 'Saved'; W = 'saved' },
-            @{ S = 'Starting'; W = 'starting' }, @{ S = 'Stopping'; W = 'stopping' }, @{ S = 'Saving'; W = 'other' }, @{ S = 'RunningCritical'; W = 'other' }
-        ) {
-            ConvertTo-VmState $S | Should -BeExactly $W
-        }
+    It 'gives the worker''s answer for a real verb (the worker and its checks run)' {
+        Mock Get-VM { [pscustomobject]@{ Name = 'web-1'; Id = [guid]::NewGuid(); State = 'Off'; ProcessorCount = 1; MemoryStartup = 1GB; MemoryAssigned = 0; Uptime = [timespan]::Zero; Generation = 2; Notes = '' } }
+        Mock Start-WorkerTask { $null = Invoke-WorkerJob -Job $Job -QueueDir $script:Queue -ConfigPath $script:Cfg }
+        $out = Invoke-Line '{"haw":"vmctl","v":1,"id":"a-3","verb":"list","args":{}}'
+        $out | Should -Match '^\{"haw":"vmctl","v":1,"id":"a-3","ok":true,"result":\{"vms":\[\{"name":"web-1"'
     }
-
-    Context 'show' {
-        It 'gives the VM with generation, disks, networks, checkpoints and notes' {
-            $vm = (Send 'show' @{ name = 'web-2' }).result.vm
-            $vm.name | Should -Be 'web-2'
-            $vm.generation | Should -Be 2
-            $vm.disks[0].sizeGB | Should -Be 40
-            $vm.disks[0].usedGB | Should -Be 12.5
-            $vm.checkpoints | Should -Be 2
-            $vm.notes | Should -Be 'a test VM'
-            $vm.networks[0].switch | Should -Be 'LAN'
-            $vm.networks[0].mac | Should -BeExactly '00:15:5d:01:02:04'
-            $vm.networks[1].switch | Should -Be ''
-            $script:Json | Should -Match '"disks":\[\{"sizeGB":40'
-            $script:Json | Should -Match '"mac":"00:15:5d:01:02:05","addresses":\[\]'
-        }
-        It 'gives sizeGB null when Get-VHD fails, and still answers' {
-            Mock Get-VHD { throw 'access denied' }
-            $r = Send 'show' @{ name = 'web-1' }
-            $r.ok | Should -BeTrue
-            $script:Json | Should -Match '"disks":\[\{"sizeGB":null,"usedGB":null\}\]'
-        }
-        It 'gives an empty disk list as a list' {
-            Mock Get-VMHardDiskDrive { }
-            $null = Send 'show' @{ name = 'web-1' }
-            $script:Json | Should -Match '"disks":\[\]'
-        }
-        It 'answers not-found for a name no VM has, and looks names up with their case' {
-            (Send 'show' @{ name = 'web-9' }).error.code | Should -Be 'not-found'
-            (Send 'show' @{ name = 'big-vm' }).error.code | Should -Be 'not-found'
-        }
-        It 'refuses two VMs of one name' {
-            $script:FakeVms += New-FakeVm 'web-1'
-            $r = Send 'show' @{ name = 'web-1' }
-            $r.error.code | Should -Be 'backend'
-            $r.error.message | Should -Match 'more than one'
-        }
+    It 'answers backend when no reply comes in time, with the id when it is valid' {
+        Mock Start-WorkerTask { }
+        $r = ConvertFrom-Json (Invoke-Line '{"haw":"vmctl","v":1,"id":"a-4","verb":"list","args":{}}' -Timeout 1)
+        $r.ok | Should -BeFalse
+        $r.error.code | Should -Be 'backend'
+        $r.error.message | Should -Be 'the vmctl worker did not answer in time'
+        $r.id | Should -Be 'a-4'
     }
-
-    Context 'start' {
-        It 'starts an off VM with the VM object from Get-VM' {
-            $r = Send 'start' @{ name = 'web-1' }
-            $r.ok | Should -BeTrue
-            $r.result.vm.state | Should -Be 'running'
-            Should -Invoke Start-VM -Times 1 -ParameterFilter { $VM[0].Name -ceq 'web-1' -and -not $PSBoundParameters.ContainsKey('Name') }
-        }
-        It 'starts a saved VM' {
-            ($script:FakeVms | Where-Object { $_.Name -eq 'web-1' }).State = 'Saved'
-            (Send 'start' @{ name = 'web-1' }).ok | Should -BeTrue
-        }
-        It 'refuses a VM that runs (wrong-state)' {
-            (Send 'start' @{ name = 'web-2' }).error.code | Should -Be 'wrong-state'
-            Should -Invoke Start-VM -Times 0
-        }
-        It 'refuses a name outside the pattern' {
-            (Send 'start' @{ name = 'Big-VM' }).error.code | Should -Be 'name-not-allowed'
-            Should -Invoke Start-VM -Times 0
-        }
-        It 'starts a protected VM' {
-            ($script:FakeVms | Where-Object { $_.Name -eq 'build-1' }).State = 'Off'
-            (Send 'start' @{ name = 'build-1' }).ok | Should -BeTrue
-        }
-        It 'answers not-found for a name no VM has' {
-            (Send 'start' @{ name = 'web-9' }).error.code | Should -Be 'not-found'
-        }
-        It 'starts when the running VMs reach the ceiling exactly' {
-            # Running: 7 CPUs, 12288 MB; web-1 takes 2 CPUs, 4096 MB; ceilings 16 and 16384.
-            (Send 'start' @{ name = 'web-1' }).ok | Should -BeTrue
-        }
-        It 'refuses to go past the CPU ceiling' {
-            Set-Config '{"ceilings":{"cpus":8}}'
-            $r = Send 'start' @{ name = 'web-1' }
-            $r.error.code | Should -Be 'ceiling'
-            $r.error.message | Should -Match '9 CPUs'
-            Should -Invoke Start-VM -Times 0
-        }
-        It 'refuses to go past the memory ceiling' {
-            Set-Config '{"ceilings":{"memoryMB":16000}}'
-            (Send 'start' @{ name = 'web-1' }).error.code | Should -Be 'ceiling'
-            Should -Invoke Start-VM -Times 0
-        }
-        It 'counts paused VMs and leaves saved and off VMs out' {
-            ($script:FakeVms | Where-Object { $_.Name -eq 'web-2' }).State = 'Paused'
-            ($script:FakeVms | Where-Object { $_.Name -eq 'build-1' }).State = 'Saved'
-            Set-Config '{"ceilings":{"cpus":5}}'
-            # Paused web-2 (2) + lab-3 (1) + web-1 (2) = 5.
-            (Send 'start' @{ name = 'web-1' }).ok | Should -BeTrue
-        }
-        It 'turns a Hyper-V failure into backend, one line, no stack trace' {
-            Mock Start-VM { throw "The virtual machine could not be started.`r`nNot enough memory." }
-            $r = Send 'start' @{ name = 'web-1' }
-            $r.error.code | Should -Be 'backend'
-            $r.error.message | Should -Be 'The virtual machine could not be started. Not enough memory.'
-            $script:Json | Should -Not -Match 'at line|ScriptStackTrace|\.ps1'
-        }
+    It 'answers with id null when the id is not valid: <Why>' -TestCases @(
+        @{ Why = 'no JSON'; Line = 'hello' },
+        @{ Why = 'a bad id'; Line = '{"id":"has space"}' },
+        @{ Why = 'an id of another case'; Line = '{"ID":"a-5"}' },
+        @{ Why = 'a number'; Line = '{"id":5}' }
+    ) {
+        Mock Start-WorkerTask { }
+        $out = Invoke-Line $Line -Timeout 1
+        $out | Should -Match '"id":null'
     }
-
-    Context 'stop' {
-        It 'asks the guest to shut down by default' {
-            $r = Send 'stop' @{ name = 'web-2' }
-            $r.ok | Should -BeTrue
-            $r.result.vm.state | Should -Be 'off'
-            Should -Invoke Stop-VM -Times 1 -ParameterFilter { $Force -and $AsJob -and -not $TurnOff -and $VM[0].Name -ceq 'web-2' }
-        }
-        It 'turns the VM off with force' {
-            (Send 'stop' @{ name = 'web-2'; force = $true }).ok | Should -BeTrue
-            Should -Invoke Stop-VM -Times 1 -ParameterFilter { $TurnOff -and -not $AsJob }
-        }
-        It 'answers ok with the state of the moment when the guest takes longer' {
-            Mock Stop-VM { [pscustomobject]@{ Kind = 'job' } }
-            Mock Wait-VmJob { [pscustomobject]@{ Done = $false; Error = $null } }
-            $r = Send 'stop' @{ name = 'web-2' }
-            $r.ok | Should -BeTrue
-            $r.result.vm.state | Should -Be 'running'
-        }
-        It 'turns a failed guest shutdown into backend' {
-            Mock Wait-VmJob { [pscustomobject]@{ Done = $true; Error = 'the shutdown service is not running' } }
-            $r = Send 'stop' @{ name = 'web-2' }
-            $r.error.code | Should -Be 'backend'
-            $r.error.message | Should -Match 'shutdown service'
-        }
-        It 'refuses an off VM (wrong-state), also with force' {
-            (Send 'stop' @{ name = 'web-1' }).error.code | Should -Be 'wrong-state'
-            (Send 'stop' @{ name = 'web-1'; force = $true }).error.code | Should -Be 'wrong-state'
-            Should -Invoke Stop-VM -Times 0
-        }
-        It 'refuses a protected VM: <Name>' -TestCases @(@{ Name = 'build-1' }, @{ Name = 'lab-3' }) {
-            $r = Send 'stop' @{ name = $Name; force = $true }
-            $r.error.code | Should -Be 'protected'
-            Should -Invoke Stop-VM -Times 0
-        }
-        It 'refuses a name outside the pattern' {
-            (Send 'stop' @{ name = 'Big-VM' }).error.code | Should -Be 'name-not-allowed'
-        }
+    It 'answers backend "did not start" when the task can''t be started' {
+        Mock Start-WorkerTask { throw 'Access is denied. (Exception from HRESULT: 0x80070005)' }
+        $r = ConvertFrom-Json (Invoke-Line '{"haw":"vmctl","v":1,"id":"a-6","verb":"list","args":{}}')
+        $r.error.code | Should -Be 'backend'
+        $r.error.message | Should -Match '^the vmctl worker did not start: Access is denied'
+        $r.id | Should -Be 'a-6'
     }
-
-    Context 'restart' {
-        It 'shuts the guest down, then starts it, by default' {
-            $r = Send 'restart' @{ name = 'web-2' }
-            $r.ok | Should -BeTrue
-            $r.result.vm.state | Should -Be 'running'
-            Should -Invoke Stop-VM -Times 1 -ParameterFilter { $Force -and $AsJob -and -not $TurnOff }
-            Should -Invoke Start-VM -Times 1
-            Should -Invoke Restart-VM -Times 0
-        }
-        It 'resets with force' {
-            (Send 'restart' @{ name = 'web-2'; force = $true }).ok | Should -BeTrue
-            Should -Invoke Restart-VM -Times 1 -ParameterFilter { $Force -and $VM[0].Name -ceq 'web-2' }
-            Should -Invoke Stop-VM -Times 0
-        }
-        It 'answers backend and does not start when the guest takes too long' {
-            Mock Stop-VM { [pscustomobject]@{ Kind = 'job' } }
-            Mock Wait-VmJob { [pscustomobject]@{ Done = $false; Error = $null } }
-            (Send 'restart' @{ name = 'web-2' }).error.code | Should -Be 'backend'
-            Should -Invoke Start-VM -Times 0
-        }
-        It 'refuses an off VM and a protected VM' {
-            (Send 'restart' @{ name = 'web-1' }).error.code | Should -Be 'wrong-state'
-            (Send 'restart' @{ name = 'build-1' }).error.code | Should -Be 'protected'
-            Should -Invoke Restart-VM -Times 0
-        }
+    It 'answers backend when the reply file is empty' {
+        $script:Canned = ''
+        (ConvertFrom-Json (Invoke-Line '{"haw":"vmctl","v":1,"id":"a-7","verb":"list","args":{}}')).error.message | Should -Match 'empty reply'
     }
-
-    Context 'console-info' {
-        It 'gives the console name and port from the config and the VM id' {
-            $vm = $script:FakeVms | Where-Object { $_.Name -eq 'web-1' }
-            $c = (Send 'console-info' @{ name = 'web-1' }).result.console
-            $c.kind | Should -Be 'vmconnect'
-            $c.host | Should -Be 'hv1.example.lan'
-            $c.port | Should -Be 2179
-            $c.vmId | Should -BeExactly ([string]$vm.Id).ToLowerInvariant()
-        }
-        It 'refuses a name outside the pattern' {
-            (Send 'console-info' @{ name = 'Big-VM' }).error.code | Should -Be 'name-not-allowed'
-        }
+    It 'answers bad-request itself for a line it can''t read, and starts nothing' {
+        $big = [Text.Encoding]::ASCII.GetBytes(('x' * 65537) + "`n")
+        $r = ConvertFrom-Json (Invoke-FrontRequest -Stream (New-Object IO.MemoryStream(, $big)) -QueueDir $script:Queue -TimeoutSeconds 1)
+        $r.error.code | Should -Be 'bad-request'
+        $r.error.message | Should -Match '64 KB'
+        $r = ConvertFrom-Json (Invoke-FrontRequest -Stream (New-Object IO.MemoryStream(, [byte[]]@(10))) -QueueDir $script:Queue -TimeoutSeconds 1)
+        $r.error.message | Should -Match 'empty'
+        Should -Invoke Start-WorkerTask -Times 0
+        @(Get-ChildItem -LiteralPath $script:Queue).Count | Should -Be 0
     }
-
-    Context 'protect patterns' {
-        It 'matches * and ? without case, and takes [ ] as they are' {
-            Test-NameProtected 'build-7' @('BUILD-*') | Should -BeTrue
-            Test-NameProtected 'lab-3' @('Lab-?') | Should -BeTrue
-            Test-NameProtected 'lab-33' @('lab-?') | Should -BeFalse
-            Test-NameProtected 'lit[1]' @('lit[1]') | Should -BeTrue
-            Test-NameProtected 'lit1' @('lit[1]') | Should -BeFalse
-            Test-NameProtected 'web-1' @() | Should -BeFalse
-        }
+    It 'never writes into a file that is there' {
+        $p =Join-Path $script:Queue 'taken.req'
+        [IO.File]::WriteAllText($p, 'old')
+        { Write-RequestFile -Path $p -Text 'new' } | Should -Throw
+        [IO.File]::ReadAllText($p) | Should -Be 'old'
     }
-
-    Context 'the reply' {
-        It 'is one line, with haw, v, id and ok' {
-            foreach ($verb in 'info', 'list') {
-                $null = Send $verb
-                $script:Json | Should -Not -Match "[`r`n]"
-                $script:Json | Should -Match '^\{"haw":"vmctl","v":1,"id":"t-1","ok":true,"result":'
-            }
-        }
-        It 'turns any failure into backend' {
-            Mock Get-VM { throw 'Hyper-V is not running' }
-            $r = Send 'list'
-            $r.error.code | Should -Be 'backend'
-            $r.error.message | Should -Be 'Hyper-V is not running'
-        }
+    It 'starts the task named haw-vmctl-worker with Run(<guid>)' {
+        $ast = [Management.Automation.Language.Parser]::ParseFile($script:Src, [ref]$null, [ref]$null)
+        $fn = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Start-WorkerTask' }, $true)
+        $fn.Extent.Text | Should -Match 'Schedule\.Service'
+        $fn.Extent.Text | Should -Match '\.Run\(\$Job\)'
+        $script:WorkerTaskName | Should -Be 'haw-vmctl-worker'
     }
 }
 
@@ -562,33 +159,31 @@ Describe 'vmctl.ps1 as a process' {
         $script:Child = Join-Path $script:Here 'child-host.ps1'
     }
     BeforeEach {
+        $script:Queue = Join-Path $TestDrive ('p-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $null = New-Item -ItemType Directory -Path $script:Queue -Force
         $script:Cfg = Join-Path $TestDrive 'vmctl.json'
-        Set-Config $script:GoodConfig
+        [IO.File]::WriteAllText($script:Cfg, '{"protected":["build-*"]}')
         $script:ErrFile = Join-Path $TestDrive 'stderr.txt'
     }
     It 'writes only the reply on standard output, as one line, and exits 0 (<Why>)' -TestCases @(
-        @{ Why = 'list'; Line = '{"haw":"vmctl","v":1,"id":"p-1","verb":"list","args":{}}'; Code = $null },
-        @{ Why = 'not JSON'; Line = 'hello'; Code = 'bad-request' },
-        @{ Why = 'an empty line'; Line = ''; Code = 'bad-request' },
-        @{ Why = 'not in this version'; Line = '{"haw":"vmctl","v":1,"id":"p-1","verb":"create","args":{}}'; Code = 'not-in-this-version' }
+        @{ Why = 'list'; Mode = 'answer'; Line = '{"haw":"vmctl","v":1,"id":"p-1","verb":"list","args":{}}'; Code = $null },
+        @{ Why = 'not JSON'; Mode = 'answer'; Line = 'hello'; Code = 'bad-request' },
+        @{ Why = 'an empty line'; Mode = 'answer'; Line = ''; Code = 'bad-request' },
+        @{ Why = 'not in this version'; Mode = 'answer'; Line = '{"haw":"vmctl","v":1,"id":"p-1","verb":"create","args":{}}'; Code = 'not-in-this-version' },
+        @{ Why = 'the task can''t start'; Mode = 'fail'; Line = '{"haw":"vmctl","v":1,"id":"p-1","verb":"list","args":{}}'; Code = 'backend' },
+        @{ Why = 'no answer'; Mode = 'silent'; Line = '{"haw":"vmctl","v":1,"id":"p-1","verb":"list","args":{}}'; Code = 'backend' }
     ) {
-        $out = @($Line | & $script:Pwsh -NoProfile -NonInteractive -File $script:Child -Script $script:Src -ConfigPath $script:Cfg 2> $script:ErrFile)
+        $out = @($Line | & $script:Pwsh -NoProfile -NonInteractive -File $script:Child -Front $script:Src -Worker $script:WorkerSrc -QueueDir $script:Queue -ConfigPath $script:Cfg -Mode $Mode -Timeout 2 2> $script:ErrFile)
         $LASTEXITCODE | Should -Be 0
         $out.Count | Should -Be 1
         $out[0] | Should -Match '^\{"haw":"vmctl".*\}$'
         $r = ConvertFrom-Json $out[0]
-        if ($Code) { $r.error.code | Should -Be $Code } else { $r.ok | Should -BeTrue; $script:Json = $out[0] }
+        if ($Code) { $r.error.code | Should -Be $Code } else { $r.ok | Should -BeTrue }
     }
     It 'gives the list from the stand-ins, and logs on standard error only' {
-        $out = @('{"haw":"vmctl","v":1,"id":"p-2","verb":"list","args":{}}' | & $script:Pwsh -NoProfile -NonInteractive -File $script:Child -Script $script:Src -ConfigPath $script:Cfg 2> $script:ErrFile)
+        $out = @('{"haw":"vmctl","v":1,"id":"p-2","verb":"list","args":{}}' | & $script:Pwsh -NoProfile -NonInteractive -File $script:Child -Front $script:Src -Worker $script:WorkerSrc -QueueDir $script:Queue -ConfigPath $script:Cfg 2> $script:ErrFile)
         $out.Count | Should -Be 1
         $out[0] | Should -Match '"vms":\[\{"name":"web-1".*"addresses":\["192\.0\.2\.10"\]'
         (Get-Content -Raw $script:ErrFile) | Should -Match 'stand-in Get-VM'
-    }
-    It 'answers config when the config file is missing' {
-        $out = @('{"haw":"vmctl","v":1,"id":"p-3","verb":"list","args":{}}' | & $script:Pwsh -NoProfile -NonInteractive -File $script:Child -Script $script:Src -ConfigPath (Join-Path $TestDrive 'none.json') 2> $script:ErrFile)
-        $LASTEXITCODE | Should -Be 0
-        $out.Count | Should -Be 1
-        (ConvertFrom-Json $out[0]).error.code | Should -Be 'config'
     }
 }
