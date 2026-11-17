@@ -69,4 +69,8 @@ export interface ActionView {
   ok: boolean;
   code: string | null;
   message: string | null;
+  /** The plugin that acted for the person (1.0.3), or null for the tab. */
+  via: string | null;
+  /** That plugin's reference, such as "runbook 12 step 3". */
+  ref: string | null;
 }

@@ -127,6 +127,14 @@
         },
         "message": {
           "type": "text"
+        },
+        "via": {
+          "type": "varchar",
+          "length": 64
+        },
+        "ref": {
+          "type": "varchar",
+          "length": 255
         }
       },
       "indexes": [

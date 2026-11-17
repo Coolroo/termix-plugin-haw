@@ -280,7 +280,7 @@ function VmDetails({
                 time: formatTime(last.at),
                 user: who(last.userId),
                 action: last.action,
-              })}${last.force ? " (force)" : ""}${last.ok ? "" : ` · ${t("record.failed", { message: last.message ?? "" })}`}`
+              })}${last.force ? " (force)" : ""}${last.via ? ` · ${last.ref ? t("record.viaRef", { plugin: last.via, ref: last.ref }) : t("record.via", { plugin: last.via })}` : ""}${last.ok ? "" : ` · ${t("record.failed", { message: last.message ?? "" })}`}`
             : last === null
               ? t("vms.noAction")
               : ""}

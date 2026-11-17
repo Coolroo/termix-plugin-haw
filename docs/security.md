@@ -33,6 +33,36 @@ or changes a VM, or that changes the host.
   `vmctl info`), console links (a VM id and a Termix host id), and the record
   of actions. No password, key or token.
 - Termix's audit log gets a line per action, as the person who clicked.
+- Nothing about other plugins but their ids: the admin's allow-list, and the
+  plugin and its reference on each action it did for a person.
+
+## Other plugins (the VM service)
+
+HAW 1.0.3 provides `haw.vms` ([the VM service](service.md)), so that another
+plugin can do VM actions for a person. It gives that plugin no more than the
+person has in the tab:
+
+- **A person, never an argument.** Core runs each call as the acting user and
+  checks **See VMs** first. HAW reads the person from core, checks their HAW
+  role as the tab does, and connects as them through Termix's SSH pipeline,
+  so Termix's sharing rules and the host's limits apply. A caller that names
+  another user is refused.
+- **Only plugins an admin allows.** The allow-list in HAW's settings is empty
+  by default. It is read on every call, so taking a plugin off it stops that
+  plugin at once.
+- **Proof of the caller.** Core does not say which plugin calls a service.
+  HAW hands each allowed plugin a key through a registry entry under that
+  plugin's own id, which only that plugin can make, and every call must carry
+  it. A key is an HMAC of the plugin id under a random key that lives in
+  HAW's memory only; a plugin can't use another plugin's key, and a bind for
+  another plugin's id sends the key to that plugin, not to the one that
+  asked.
+- **No agent actions.** A call for an agent token, as the person who made it,
+  can only list hosts and VMs. Actions need a person who presses a button in
+  the calling plugin; the confirm for `force` is that plugin's.
+- **Recorded.** Each action and console call is in HAW's record and in
+  Termix's audit log with the plugin and its reference; each refused caller
+  is in the audit log. Core writes its own audit line for every service call.
 
 ## How HAW connects
 

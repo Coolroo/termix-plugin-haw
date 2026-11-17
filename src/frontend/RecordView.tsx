@@ -56,6 +56,18 @@ export function RecordView() {
               action: action.action,
             })}
           </span>
+          {action.via && (
+            // Plain text, not a badge: a badge's capitals would change the
+            // plugin's own reference.
+            <span
+              className="rounded-sm border border-primary/40 px-1.5 text-xs text-primary"
+              data-testid="via"
+            >
+              {action.ref
+                ? t("record.viaRef", { plugin: action.via, ref: action.ref })
+                : t("record.via", { plugin: action.via })}
+            </span>
+          )}
           {!action.ok && action.message && (
             <span className="text-xs text-destructive">
               {t("record.failed", { message: action.message })}

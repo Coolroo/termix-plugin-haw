@@ -1,7 +1,7 @@
 {
   "id": "haw",
   "name": "Hundred Acre Wood",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A VM manager for any host you add: see every VM, start, stop and restart them, and open their consoles, through one fixed command on each host.",
   "author": {
     "name": "Coolroo"
@@ -19,6 +19,7 @@
     "The host keeps its own limits: a name pattern, a protect list and ceilings that HAW can't change",
     "Open a VM's console in the Remote Desktop plugin",
     "Three roles: owner, operator and viewer",
+    "A VM service other plugins (Runbooks) use to do VM actions for a person, for the plugins an admin allows",
     "Every action recorded, in HAW and in Termix's audit log"
   ],
   "env": [],
@@ -33,6 +34,13 @@
     "hosts:read",
     "ssh:connect",
     "credentials:use"
+  ],
+  "provides": [
+    {
+      "service": "haw.vms",
+      "version": "1.0.0",
+      "permission": "haw.view"
+    }
   ],
   "contributes": {
     "tabs": [
@@ -62,7 +70,18 @@
         "descriptionKey": "permissions.manage.description",
         "defaultRoles": ["admin"]
       }
-    ]
+    ],
+    "settings": {
+      "admin": [
+        {
+          "key": "servicePlugins",
+          "type": "textarea",
+          "labelKey": "settings.servicePlugins.label",
+          "descriptionKey": "settings.servicePlugins.description",
+          "placeholderKey": "settings.servicePlugins.placeholder"
+        }
+      ]
+    }
   },
   "locales": "locales",
   "platforms": ["linux", "win32", "darwin"],

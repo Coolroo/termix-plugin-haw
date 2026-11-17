@@ -74,6 +74,10 @@ export const actions = defineTable(
     // The vmctl error code, or HAW's own (unreachable, no-reply, ...).
     code: varchar(32),
     message: text(),
+    // 1.0.3: the plugin that acted for the person through the service
+    // haw.vms, and its own reference ("runbook 12 step 3"). Null for the tab.
+    via: varchar(64),
+    ref: varchar(255),
   },
   {
     indexes: [

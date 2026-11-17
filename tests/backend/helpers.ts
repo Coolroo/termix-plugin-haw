@@ -117,6 +117,11 @@ export interface TestServer {
     options?: PluginSshExecOptions;
   }>;
   setExec: (fn: ExecFn) => void;
+  /**
+   * Other plugins' entries in ctx.registry, by key. Core lets each plugin
+   * provide keys under its own id only; a test puts them here.
+   */
+  registry: Map<string, unknown>;
   call: (
     method: string,
     path: string,
@@ -136,6 +141,7 @@ export async function startServer(
     hosts?: PluginHostSummary[];
     sshHosts?: PluginSshHost[];
     fakes?: Record<number, FakeHost>;
+    settings?: Record<string, unknown>;
   } = {},
 ): Promise<TestServer> {
   const db = await createTestDb(pluginDir);
@@ -152,6 +158,7 @@ export async function startServer(
     db: db.database,
     router: () => (router = express.Router()),
     permissions: options.permissions ?? OWNER,
+    ...(options.settings ? { settings: options.settings } : {}),
     hosts: options.hosts ?? [host(1), host(2), host(3)],
     sshHosts: options.sshHosts ?? [
       sshHost(1, "aa11"),
@@ -172,6 +179,12 @@ export async function startServer(
     return exec(h, command, opts);
   };
 
+  const registry = new Map<string, unknown>();
+  const consume = mock.ctx.registry.consume.bind(mock.ctx.registry);
+  (mock.ctx.registry as { consume: (key: string) => unknown }).consume = (
+    key,
+  ) => (registry.has(key) ? registry.get(key) : consume(key));
+
   const { activate } = await import("../../src/backend/index.js");
   await activate(mock.ctx);
 
@@ -190,6 +203,7 @@ export async function startServer(
     db,
     mock,
     execCalls,
+    registry,
     setExec: (fn) => {
       exec = fn;
     },

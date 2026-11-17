@@ -51,9 +51,14 @@ export interface ActionRow {
   ok: boolean;
   code: string | null;
   message: string | null;
+  /** The plugin that acted for the person (service haw.vms), or null. */
+  via: string | null;
+  /** That plugin's reference, such as "runbook 12 step 3". */
+  ref: string | null;
 }
 
-export type NewAction = Omit<ActionRow, "id" | "at">;
+export type NewAction = Omit<ActionRow, "id" | "at" | "via" | "ref"> &
+  Partial<Pick<ActionRow, "via" | "ref">>;
 
 function parseInfo(text: unknown): HostInfo | null {
   if (typeof text !== "string" || !text) return null;
@@ -93,6 +98,8 @@ function toAction(row: Record<string, unknown>): ActionRow {
     ok: bool(row.ok),
     code: (row.code as string | null) ?? null,
     message: (row.message as string | null) ?? null,
+    via: (row.via as string | null) ?? null,
+    ref: (row.ref as string | null) ?? null,
   };
 }
 
@@ -235,6 +242,8 @@ export async function createStore(db: PluginDatabase) {
       ...action,
       at: now(),
       message: action.message ? action.message.slice(0, 1000) : null,
+      via: action.via ?? null,
+      ref: action.ref ? action.ref.slice(0, 255) : null,
     });
     await db.persist();
   }

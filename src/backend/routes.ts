@@ -11,14 +11,14 @@ import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
 import { body, idParam, refuseApiKey, requireSignedIn, wrap } from "./http.js";
 import { InputError } from "./errors.js";
 import type { Store, VmHostRow } from "./store.js";
-import type { CallFailure, CallResult, Vmctl } from "./vmctl.js";
+import type { Vmctl } from "./vmctl.js";
+import { checked, failure, refuse, VM_NAME } from "./calls.js";
 import {
   POWER_VERBS,
   toConsole,
   toInfo,
   toVmDetail,
   toVmList,
-  ProtocolError,
   type PowerVerb,
 } from "../shared/protocol.js";
 import {
@@ -26,78 +26,21 @@ import {
   INTERFACES,
   isInterfaceId,
 } from "../shared/interfaces.js";
-import {
-  canManage,
-  canOperate,
-  canView,
-  PERMISSIONS,
-  roleOf,
-  type Role,
-} from "../shared/roles.js";
+import { canManage, canOperate, canView, type Role } from "../shared/roles.js";
+import { currentRole } from "./role.js";
 import { isSshHost } from "../shared/hosts.js";
 import type {
   ActionView,
   CheckAnswer,
   ConsoleAnswer,
-  Failure,
   MeAnswer,
   TermixHostView,
   VmHostView,
   VmListAnswer,
 } from "../shared/api.js";
 
-/** HTTP status for each way a call fails. */
-const STATUS: Record<CallFailure, number> = {
-  "bad-request": 400,
-  version: 409,
-  "unknown-verb": 409,
-  "not-in-this-version": 409,
-  "name-not-allowed": 409,
-  protected: 409,
-  ceiling: 409,
-  "not-found": 404,
-  "wrong-state": 409,
-  config: 409,
-  backend: 502,
-  "no-access": 403,
-  "not-ssh": 400,
-  "no-host-key": 409,
-  unreachable: 502,
-  timeout: 504,
-  "no-reply": 502,
-  protocol: 502,
-};
-
-/** VM names in a path: what the host may hold, never a wildcard. */
-const VM_NAME = /^[^*?[\]\u0000-\u001f]{1,100}$/;
 const VM_ID = /^[A-Za-z0-9-]{1,64}$/;
 const MAX_ACTIONS = 200;
-
-function failure(result: Extract<CallResult, { ok: false }>): Failure {
-  return {
-    error: result.message || result.code,
-    code: result.code,
-    ...(result.detail ? { detail: result.detail } : {}),
-    ...(result.versions ? { versions: result.versions } : {}),
-  };
-}
-
-function refuse(result: Extract<CallResult, { ok: false }>): never {
-  const { error, ...extra } = failure(result);
-  throw new InputError(error, STATUS[result.code], extra);
-}
-
-/** A result the protocol checks turn down is the host's fault: 502. */
-function checked<T>(read: () => T): T {
-  try {
-    return read();
-  } catch (error) {
-    if (error instanceof ProtocolError) {
-      throw new InputError(error.message, 502, { code: "protocol" });
-    }
-    throw error;
-  }
-}
 
 export function registerRoutes(
   router: Router,
@@ -110,14 +53,7 @@ export function registerRoutes(
   const gate = [signedIn, noApiKey];
   const actor = () => ctx.currentActor()!;
 
-  async function role(): Promise<Role | null> {
-    const [view, operate, manage] = await Promise.all([
-      ctx.rbac.has(PERMISSIONS.view),
-      ctx.rbac.has(PERMISSIONS.operate),
-      ctx.rbac.has(PERMISSIONS.manage),
-    ]);
-    return roleOf({ view, operate, manage });
-  }
+  const role = () => currentRole(ctx);
 
   async function need(check: (role: Role | null) => boolean, what: string) {
     if (!check(await role())) throw new InputError(`you may not ${what}`, 403);

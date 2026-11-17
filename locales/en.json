@@ -20,6 +20,13 @@
       "description": "Add and remove VM hosts and link consoles. Includes Power VMs and See VMs."
     }
   },
+  "settings": {
+    "servicePlugins": {
+      "label": "Plugins that may act for a person",
+      "description": "Plugin ids, one a line, that may use HAW's VM service (haw.vms) to list, start, stop and restart VMs and open consoles for the person who uses them, with that person's HAW role. Empty: no plugin may. Add runbooks for VM steps in Runbooks.",
+      "placeholder": "runbooks"
+    }
+  },
   "interfaces": {
     "hyper-v": {
       "label": "Hyper-V (Windows)"
@@ -170,7 +177,9 @@
     "line": "{{time}} · {{user}} · {{action}}",
     "failed": "failed: {{message}}",
     "you": "you",
-    "other": "user {{id}}"
+    "other": "user {{id}}",
+    "via": "via {{plugin}}",
+    "viaRef": "via {{plugin}}: {{ref}}"
   },
   "errors": {
     "load": "HAW could not read this: {{error}}",

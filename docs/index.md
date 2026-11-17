@@ -8,6 +8,7 @@ later versions.
 - [The vmctl protocol](protocol.md): what HAW sends to a host and what it reads back
 - [Hyper-V hosts](hyper-v.md): the one-time setup of a Windows machine
 - [Security](security.md): what HAW can and can't do on a host
+- [For other plugins](service.md): the VM service `haw.vms`, which Runbooks uses for VM steps
 
 ## How it works
 
@@ -86,3 +87,13 @@ with one click.
 Every action (adding or removing a host, each power action, each console link)
 is kept with who did it, when, and what the host answered, in HAW's own tables
 and in Termix's audit log (`haw.<action>`). **Record** in the tab shows it.
+An action another plugin did for a person, through the VM service, also shows
+that plugin and its reference: "via runbooks: runbook 12 step 3".
+
+## Other plugins
+
+Another plugin can do VM actions for the person who uses it through HAW's VM
+service, `haw.vms`: Runbooks does for its VM steps. The person's HAW role and
+the host's limits apply as in the tab. An admin allows each plugin by its id,
+one a line, in HAW's settings (**Plugins that may act for a person**); the
+list is empty by default. See [the VM service](service.md).

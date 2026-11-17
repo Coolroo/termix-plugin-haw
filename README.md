@@ -27,6 +27,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 - Open a VM's console in the Remote Desktop plugin (Hyper-V VMConnect)
 - Three roles: owner, operator and viewer
 - Every action recorded with who, what, where and the answer, in HAW and in Termix's audit log
+- A VM service for other plugins (Runbooks VM steps), for the plugins an admin allows, as the person who acts
 - One protocol for every hypervisor ([vmctl protocol](docs/protocol.md)); Hyper-V first, more back ends later
 
 <br />
@@ -37,6 +38,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 - [Hyper-V hosts](docs/hyper-v.md)
 - [The vmctl protocol](docs/protocol.md)
 - [Security](docs/security.md)
+- [For other plugins: the VM service](docs/service.md)
 
 <br />
 

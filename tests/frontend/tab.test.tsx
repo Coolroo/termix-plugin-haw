@@ -65,6 +65,8 @@ const DETAIL_GETS = {
       ok: true,
       code: null,
       message: null,
+      via: "runbooks",
+      ref: "runbook 12 step 3",
     },
   ],
 };
@@ -423,13 +425,39 @@ describe("the list", () => {
     await waitFor(() =>
       expect(
         within(details).getByTestId("vm-last-action").textContent,
-      ).toContain("user 4be1c2a0 · restart"),
+      ).toContain("user 4be1c2a0 · restart · via runbooks: runbook 12 step 3"),
     );
     expect(api.get).toHaveBeenCalledWith("/actions", {
       params: { hostId: 1, vmName: "web-1", limit: 1 },
     });
     fireEvent.click(toggle);
     expect(within(row).queryByTestId("vm-details")).toBeNull();
+  });
+
+  it("shows in the record which plugin acted for the person", async () => {
+    const action = DETAIL_GETS["/actions"][0];
+    await render(
+      fakeApi({
+        role: "viewer",
+        get: {
+          "/actions": [
+            action,
+            { ...action, id: 8, via: null, ref: null, action: "start" },
+            { ...action, id: 7, ref: null, action: "stop" },
+          ],
+        },
+      }),
+    );
+    fireEvent.click(await screen.findByText(locales.hosts.record));
+    const lines = await screen.findAllByTestId("action");
+    expect(lines).toHaveLength(3);
+    expect(within(lines[0]).getByTestId("via").textContent).toBe(
+      "via runbooks: runbook 12 step 3",
+    );
+    expect(within(lines[1]).queryByTestId("via")).toBeNull();
+    expect(within(lines[2]).getByTestId("via").textContent).toBe(
+      "via runbooks",
+    );
   });
 
   it("filters by name, address and state", async () => {

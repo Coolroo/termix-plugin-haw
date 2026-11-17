@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3
+
+### Added
+
+- The VM service `haw.vms` (version 1.0.0), for other plugins: `hosts`, `info`, `list`, `show`, `start`, `stop`, `restart` and `consoleInfo`, as the acting person, with their HAW role and the host's limits, through the same vmctl call as the tab. Runbooks uses it for VM steps. See [the VM service](docs/service.md).
+- **Plugins that may act for a person**, an admin setting: the plugin ids that may use the service, one a line. Empty by default.
+- A plugin proves who it is with a key HAW hands to a receiver under the plugin's own id (`<id>.hawVmsKey`), as OpenBao Secrets' service does. Every call carries it.
+- A call for an agent token (`agent: true`) may only list hosts and VMs.
+- HAW's record keeps the plugin that acted for the person and its reference ("via runbooks: runbook 12 step 3"). **Record** and a VM's last action show it; Termix's audit line has it in its details.
+
 ## 1.0.2
 
 ### Changed
