@@ -241,12 +241,19 @@ export async function createStore(db: PluginDatabase) {
 
   async function listActions(filter: {
     hostId?: number;
+    vmName?: string;
     limit: number;
   }): Promise<ActionRow[]> {
     let query = (await client()).select().from(actions);
-    if (filter.hostId !== undefined) {
-      query = query.where(eq(actions.hostId, filter.hostId));
-    }
+    const where = and(
+      filter.hostId === undefined
+        ? undefined
+        : eq(actions.hostId, filter.hostId),
+      filter.vmName === undefined
+        ? undefined
+        : eq(actions.vmName, filter.vmName),
+    );
+    if (where) query = query.where(where);
     const rows = await query.orderBy(desc(actions.id)).limit(filter.limit);
     return rows.map(toAction);
   }

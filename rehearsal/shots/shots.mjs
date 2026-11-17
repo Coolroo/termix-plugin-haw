@@ -112,6 +112,14 @@ async function openHaw(page, { phone = false } = {}) {
     });
 }
 
+/** Opens a VM's details and waits for them. */
+async function expand(page, id) {
+  await vis(page, id).locator("button[aria-expanded]").first().click();
+  await vis(page, id)
+    .locator('[data-testid="vm-details"]')
+    .waitFor({ timeout: 15000 });
+}
+
 /** The visible copy of a test id (the side panel keeps a hidden one). */
 const vis = (page, id) => page.locator(`[data-testid="${id}"]:visible`).first();
 
@@ -127,6 +135,9 @@ const phone = { width: 390, height: 844 };
   );
   await openHaw(page);
   await shot(page, "01-hosts-desktop");
+
+  await expand(page, "vm-web-1");
+  await shot(page, "02-expanded-desktop");
 
   await vis(page, "vm-web-1").getByRole("button", { name: "Turn off" }).click();
   await page
@@ -157,6 +168,19 @@ const phone = { width: 390, height: 844 };
     .last()
     .click()
     .catch(() => page.keyboard.press("Escape"));
+  await page.waitForTimeout(500);
+
+  await page.getByRole("button", { name: "Limits" }).first().click();
+  await page.getByPlaceholder("Name or address").first().fill("build");
+  await shot(page, "05b-filter-limits");
+  await page.getByPlaceholder("Name or address").first().fill("");
+  await page.getByRole("button", { name: "Limits" }).first().click();
+  await page
+    .getByText(/^Stopped/)
+    .first()
+    .click();
+  await shot(page, "05c-filter-stopped");
+  await page.getByText(/^All/).first().click();
   await page.waitForTimeout(500);
 
   await page.getByRole("button", { name: "Record" }).first().click();
@@ -194,7 +218,26 @@ const phone = { width: 390, height: 844 };
     state.admin.password,
   );
   await openHaw(page, { phone: true });
-  await shot(page, "02-hosts-phone");
+  await shot(page, "09-hosts-phone");
+  await expand(page, "vm-web-1");
+  await vis(page, "vm-web-1").scrollIntoViewIfNeeded();
+  await shot(page, "10-expanded-phone");
+  await ctx.close();
+}
+
+// Owner, a narrow desktop window.
+{
+  const { ctx, page } = await signIn(
+    { width: 820, height: 800 },
+    state.admin.username,
+    state.admin.password,
+  );
+  await openHaw(page);
+  const wide = await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth,
+  );
+  log("narrow window scrolls to the side:", wide);
+  await shot(page, "11-narrow-desktop");
   await ctx.close();
 }
 
@@ -203,6 +246,7 @@ const phone = { width: 390, height: 844 };
   const viewer = state.people?.["haw-viewer"];
   const { ctx, page } = await signIn(desktop, "haw-viewer", viewer.password);
   await openHaw(page);
+  await expand(page, "vm-web-1");
   await shot(page, "08-viewer");
   await ctx.close();
 }

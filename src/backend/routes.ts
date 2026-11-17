@@ -535,13 +535,18 @@ export function registerRoutes(
       if (hostId !== undefined && !Number.isInteger(hostId)) {
         throw new InputError("hostId must be a number", 400);
       }
+      const vmName =
+        req.query.vmName === undefined ? undefined : String(req.query.vmName);
+      if (vmName !== undefined && !VM_NAME.test(vmName)) {
+        throw new InputError("not a VM name", 400);
+      }
       const limit = Math.min(Number(req.query.limit) || 50, MAX_ACTIONS);
       // Names of the hosts the person can see, also for a host that is no
       // VM host (a failed add, a removed host).
       const names = new Map(
         (await ctx.hosts.list()).map((host) => [host.id, host.name || host.ip]),
       );
-      return (await store.listActions({ hostId, limit }))
+      return (await store.listActions({ hostId, vmName, limit }))
         .filter((action) => names.has(action.hostId))
         .map((action) => ({ ...action, hostName: names.get(action.hostId)! }));
     }),

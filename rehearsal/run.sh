@@ -36,6 +36,7 @@ if [ -n "${PW_DIR:-}" ] && [ -n "${SHOTS_OUT:-}" ]; then
   cp "$here/shots/shots.mjs" "$PW_DIR/shots.mjs"
   mkdir -p "$SHOTS_OUT"
   docker run --rm --name haw-reh-shots --network "container:$T" -e CHROME="$CHROME" \
+    --memory 1500m --memory-swap 1500m \
     -v "$PW_DIR":/pw:ro -v "$in":/in:ro -v "$SHOTS_OUT":/out -w /pw "$PW_IMAGE" node shots.mjs \
     || echo "FAIL screenshots [-] see above"
   rm -rf "$in"

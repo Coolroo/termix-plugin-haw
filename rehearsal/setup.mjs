@@ -173,7 +173,14 @@ save(state);
 state.hostKeys ??= {};
 for (const tag of ["vmctl", "nohaw", "garbage"]) {
   if (state.hostKeys[tag]) continue;
-  const answer = await answerHostKey(admin.cookie, state.hosts[tag], "accept");
+  // The terminal plugin activates a moment after the first hosts exist; its
+  // socket answers 503 until then.
+  let answer;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    answer = await answerHostKey(admin.cookie, state.hosts[tag], "accept");
+    if (!String(answer.error ?? "").includes("503")) break;
+    await new Promise((done) => setTimeout(done, 2000));
+  }
   say("host key", tag, JSON.stringify(answer));
   if (!answer.prompted) throw new Error(`no host key prompt for ${tag}`);
   state.hostKeys[tag] = answer.prompted.fingerprint;

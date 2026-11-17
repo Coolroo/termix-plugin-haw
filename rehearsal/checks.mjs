@@ -19,13 +19,17 @@ const short = (b, n = 300) =>
   (typeof b === "string" ? b : JSON.stringify(b)).slice(0, n);
 
 async function main() {
-  // Who I am.
+  // Who I am. The plugin answers 503 for a moment after its install.
   let r = await api("GET", "/me", admin);
+  for (let attempt = 0; r.status === 503 && attempt < 15; attempt++) {
+    await new Promise((done) => setTimeout(done, 2000));
+    r = await api("GET", "/me", admin);
+  }
   check(
-    "GET /me: owner, 1.0.0, hyper-v with setup steps",
+    "GET /me: owner, version 1.0.x, hyper-v with setup steps",
     r.status === 200 &&
       r.body.role === "owner" &&
-      r.body.version === "1.0.0" &&
+      /^1\.0\.\d+$/.test(r.body.version) &&
       r.body.interfaces?.[0]?.id === "hyper-v" &&
       r.body.interfaces[0].setup.length > 0,
     r.status,

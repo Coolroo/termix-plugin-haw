@@ -40,6 +40,35 @@ const vm = (name: string, extra: Partial<VmView> = {}): VmView => ({
   ...extra,
 });
 
+const detail = (name: string) => ({
+  ...vm(name),
+  generation: 2,
+  disks: [{ sizeGB: 80, usedGB: 20 }],
+  networks: [{ switch: "lab-net", mac: "00:15:5D:00:00:01", addresses: [] }],
+  checkpoints: 3,
+  notes: "the web server",
+});
+
+/** What a VM's details read: `show`, and its last recorded action. */
+const DETAIL_GETS = {
+  "/hosts/1/vms/web-1": { vm: detail("web-1") },
+  "/actions": [
+    {
+      id: 9,
+      at: "2026-11-14T10:00:00.000Z",
+      userId: "4be1c2a0-0000",
+      hostId: 1,
+      hostName: "hv-1",
+      action: "restart",
+      vmName: "web-1",
+      force: false,
+      ok: true,
+      code: null,
+      message: null,
+    },
+  ],
+};
+
 const vmHost: VmHostView = {
   id: 1,
   hostId: 1,
@@ -135,18 +164,27 @@ describe("the HAW tab", () => {
     const build = await screen.findByTestId("vm-build-1");
     expect(within(build).getByText("Running")).toBeTruthy();
     expect(within(build).getByText("protected")).toBeTruthy();
-    expect(
-      within(build).getByText(/2 CPU · 4 GB · 192\.0\.2\.5 · Up 2h/),
-    ).toBeTruthy();
+    expect(within(build).getByText(/2 CPU · 4 GB · 192\.0\.2\.5/)).toBeTruthy();
+    expect(within(build).getByText("Up 2h")).toBeTruthy();
     expect(
       within(screen.getByTestId("vm-old-box")).getByText("not managed"),
     ).toBeTruthy();
   });
 
   it("gives a viewer no power buttons and no Add VM host", async () => {
-    await render(fakeApi({ role: "viewer", vms: [vm("web-1")] }));
+    await render(
+      fakeApi({ role: "viewer", vms: [vm("web-1")], get: DETAIL_GETS }),
+    );
     const row = await screen.findByTestId("vm-web-1");
-    expect(within(row).queryByRole("button")).toBeNull();
+    const powerOrConsole = /Start|Shut down|Turn off|Restart|Reset|Console/;
+    expect(within(row).queryByRole("button", { name: powerOrConsole })).toBe(
+      null,
+    );
+    fireEvent.click(within(row).getByRole("button", { expanded: false }));
+    await within(row).findByTestId("vm-details");
+    expect(within(row).queryByRole("button", { name: powerOrConsole })).toBe(
+      null,
+    );
     expect(screen.queryByText("Add VM host")).toBeNull();
   });
 
@@ -154,11 +192,15 @@ describe("the HAW tab", () => {
     const api = fakeApi({
       role: "operator",
       vms: [vm("web-1")],
+      get: DETAIL_GETS,
       post: async () => ({ data: { vm: vm("web-1", { state: "off" }) } }),
     });
     await render(api);
     const row = await screen.findByTestId("vm-web-1");
-    fireEvent.click(within(row).getByText("Turn off"));
+    // Turn off is in the details, not on the row.
+    expect(within(row).queryByText("Turn off")).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { expanded: false }));
+    fireEvent.click(await within(row).findByText("Turn off"));
     expect(await screen.findByText("Turn off web-1?")).toBeTruthy();
     expect(api.post).not.toHaveBeenCalled();
     const confirm = screen.getAllByRole("button", { name: "Turn off" }).at(-1)!;
@@ -357,5 +399,125 @@ describe("keeping up with the host", () => {
         ).toBeTruthy(),
       { timeout: 4000 },
     );
+  });
+});
+
+describe("the list", () => {
+  it("opens a VM's details in place, with its disks and last action", async () => {
+    const api = fakeApi({
+      role: "operator",
+      vms: [vm("web-1")],
+      get: DETAIL_GETS,
+    });
+    await render(api);
+    const row = await screen.findByTestId("vm-web-1");
+    expect(within(row).queryByTestId("vm-details")).toBeNull();
+    const toggle = within(row).getByRole("button", { expanded: false });
+    fireEvent.click(toggle);
+    const details = await within(row).findByTestId("vm-details");
+    expect(within(details).getByText("Generation 2")).toBeTruthy();
+    expect(within(details).getByText("20 of 80 GB")).toBeTruthy();
+    expect(within(details).getByText("lab-net")).toBeTruthy();
+    expect(within(details).getByText("3 checkpoints")).toBeTruthy();
+    expect(within(details).getByText("the web server")).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        within(details).getByTestId("vm-last-action").textContent,
+      ).toContain("user 4be1c2a0 · restart"),
+    );
+    expect(api.get).toHaveBeenCalledWith("/actions", {
+      params: { hostId: 1, vmName: "web-1", limit: 1 },
+    });
+    fireEvent.click(toggle);
+    expect(within(row).queryByTestId("vm-details")).toBeNull();
+  });
+
+  it("filters by name, address and state", async () => {
+    await render(
+      fakeApi({
+        role: "viewer",
+        vms: [
+          vm("web-1"),
+          vm("db-1", { state: "off", addresses: ["198.51.100.7"] }),
+          vm("cache-1", { state: "paused", addresses: [] }),
+        ],
+      }),
+    );
+    await screen.findByTestId("vm-web-1");
+    // The counts arrive one render after the rows.
+    expect(await screen.findByText("3 VMs · 1 running · 1 hosts")).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText("Name or address"), {
+      target: { value: "198.51" },
+    });
+    await waitFor(() => expect(screen.queryByTestId("vm-web-1")).toBeNull());
+    expect(screen.getByTestId("vm-db-1")).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText("Name or address"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByText("Stopped"));
+    await waitFor(() => expect(screen.queryByTestId("vm-web-1")).toBeNull());
+    expect(screen.getByTestId("vm-db-1")).toBeTruthy();
+    expect(screen.getByTestId("vm-cache-1")).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText("Name or address"), {
+      target: { value: "nothing-like-this" },
+    });
+    expect(
+      await screen.findByText("No VM on this host matches the filter."),
+    ).toBeTruthy();
+  });
+
+  it("shows the host's memory use, and its limits on request", async () => {
+    await render(fakeApi({ role: "viewer", vms: [vm("web-1")] }));
+    const memory = await screen.findByTestId("host-memory");
+    expect(memory.textContent).toContain("44 GB of 64 GB");
+    expect(screen.queryByTestId("host-limits")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Limits" }));
+    expect(screen.getByTestId("host-limits").textContent).toContain(
+      "protected: build-*",
+    );
+  });
+
+  describe("on a phone", () => {
+    const width = window.innerWidth;
+    afterEach(() => {
+      Object.defineProperty(window, "innerWidth", {
+        value: width,
+        configurable: true,
+      });
+    });
+
+    it("keeps the row free of buttons and puts large ones in the details", async () => {
+      Object.defineProperty(window, "innerWidth", {
+        value: 390,
+        configurable: true,
+      });
+      window.matchMedia ??= ((query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })) as unknown as typeof window.matchMedia;
+      await render(
+        fakeApi({ role: "operator", vms: [vm("web-1")], get: DETAIL_GETS }),
+      );
+      const row = await screen.findByTestId("vm-web-1");
+      await waitFor(() =>
+        expect(within(row).queryByText("Restart")).toBeNull(),
+      );
+      fireEvent.click(within(row).getByRole("button", { expanded: false }));
+      const buttons = await within(row).findByTestId("vm-actions");
+      for (const name of [
+        "Shut down",
+        "Turn off",
+        "Restart",
+        "Reset",
+        "Console",
+      ]) {
+        expect(within(buttons).getByRole("button", { name })).toBeTruthy();
+      }
+    });
   });
 });

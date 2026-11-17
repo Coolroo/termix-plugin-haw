@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.2
+
+### Changed
+
+- A new VM list. Each VM is one item of two lines: its name with the Protected or Not-managed badge, then its state, size and addresses, with the uptime at the right. The buttons sit at the right and move under the name in a narrow pane, so the list never scrolls to the side.
+- A click on a VM opens its details in place: generation, size, checkpoints and ID; each disk with its use; each network with its switch, MAC and addresses; the notes; and the last action HAW recorded on that VM. Turn off and Reset are in the details; the row keeps Start, Shut down, Restart and Console.
+- On a phone, the rows have no buttons. The details show every button the VM allows, large, two to a line.
+- Each host's header shows its VM count, its memory in use as a bar, and a **Limits** button for the name pattern, protect list and ceilings.
+- A filter box (name or address) and **All**, **Running** and **Stopped** buttons with counts, above all hosts.
+
+### Added
+
+- `GET /actions` takes `vmName`, with `hostId`, for the last action on one VM.
+
 ## 1.0.1
 
 ### Changed

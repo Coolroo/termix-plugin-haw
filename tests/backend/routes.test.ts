@@ -466,6 +466,16 @@ describe("the record", () => {
     expect((await other.call("GET", "/actions")).body).toEqual([]);
     expect((await server.call("GET", "/actions?limit=1")).body).toHaveLength(1);
   });
+
+  it("narrows to one VM on one host", async () => {
+    const { server, id } = await withVmHost(start);
+    await server.call("POST", `/hosts/${id}/vms/test-vm1/start`);
+    await server.call("POST", `/hosts/${id}/vms/web-1/restart`, {});
+    const one = await server.call("GET", "/actions?hostId=1&vmName=test-vm1");
+    expect(one.body).toHaveLength(1);
+    expect(one.body[0]).toMatchObject({ action: "start", vmName: "test-vm1" });
+    expect((await server.call("GET", "/actions?vmName=a*b")).status).toBe(400);
+  });
 });
 
 describe("the record of console links", () => {

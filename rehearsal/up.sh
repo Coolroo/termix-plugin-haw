@@ -27,11 +27,14 @@ build
 docker network create --internal haw-reh-net >/dev/null
 docker volume create haw-reh-termix-data >/dev/null
 
+# Every container has a memory cap, so a rehearsal can't starve its host.
 docker run -d --name haw-reh-fakehost --hostname fakehost \
+  --memory 256m --memory-swap 256m \
   --network haw-reh-net --network-alias fakehost haw-reh-fakehost >/dev/null
 
 # No -p: Termix is reached only from inside its own network namespace.
 docker run -d --name haw-reh-termix --network haw-reh-net \
+  --memory 1200m --memory-swap 1200m \
   -v haw-reh-termix-data:/app/data \
   -e TERMIX_REQUIRE_SIGNED_PLUGINS=false \
   -e ALLOW_REGISTRATION=true \

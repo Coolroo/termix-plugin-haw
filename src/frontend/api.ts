@@ -14,7 +14,32 @@ export type {
   VmListAnswer,
   VmView,
 } from "../shared/api";
-export type { HostInfo, VmState } from "../shared/protocol";
+export type { HostInfo, VmDetail, VmState } from "../shared/protocol";
+import type { VmView } from "../shared/api";
+
+/** The list's state buttons: everything, VMs that run, VMs that don't. */
+export type StateFilter = "all" | "running" | "stopped";
+
+export interface VmFilter {
+  text: string;
+  state: StateFilter;
+}
+
+/** Off, saved and paused VMs run nothing; every other state counts as running. */
+export function isStopped(vm: VmView): boolean {
+  return vm.state === "off" || vm.state === "saved" || vm.state === "paused";
+}
+
+/** The filter box matches part of the name or of an address, in any case. */
+export function matchesFilter(vm: VmView, filter: VmFilter): boolean {
+  if (filter.state === "running" && isStopped(vm)) return false;
+  if (filter.state === "stopped" && !isStopped(vm)) return false;
+  const text = filter.text.trim().toLowerCase();
+  if (!text) return true;
+  return [vm.name, ...vm.addresses].some((value) =>
+    value.toLowerCase().includes(text),
+  );
+}
 
 export interface Refusal {
   status: number | null;

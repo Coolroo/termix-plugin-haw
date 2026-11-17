@@ -13,9 +13,18 @@ import {
   BackButton,
   Button,
   EmptyState,
+  PanelSearch,
   PanelShell,
+  Segmented,
 } from "@termix-ssh/plugin-sdk/ui";
-import { refusal, type MeAnswer, type VmHostView } from "./api";
+import {
+  isStopped,
+  refusal,
+  type MeAnswer,
+  type StateFilter,
+  type VmHostView,
+  type VmView,
+} from "./api";
 import { AddHost } from "./AddHost";
 import { HostCard } from "./HostCard";
 import { RecordView } from "./RecordView";
@@ -51,6 +60,14 @@ export function createHawTab(app: TermixApp) {
     const [hosts, setHosts] = useState<VmHostView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [view, setView] = useState<View>({ kind: "hosts" });
+    const [text, setText] = useState("");
+    const [state, setState] = useState<StateFilter>("all");
+    const [vmsOf, setVmsOf] = useState<Record<number, VmView[]>>({});
+    const onVms = useCallback(
+      (vmHostId: number, vms: VmView[]) =>
+        setVmsOf((now) => ({ ...now, [vmHostId]: vms })),
+      [],
+    );
 
     const load = useCallback(async () => {
       try {
@@ -124,10 +141,44 @@ export function createHawTab(app: TermixApp) {
       );
     }
 
+    const all = (hosts ?? []).flatMap((host) => vmsOf[host.id] ?? []);
+    const running = all.filter((vm) => !isStopped(vm)).length;
+    const toolbar =
+      hosts && hosts.length > 0 ? (
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <PanelSearch
+            value={text}
+            onChange={setText}
+            placeholder={t("filter.placeholder")}
+          />
+          <Segmented
+            value={state}
+            onChange={setState}
+            options={[
+              { value: "all", label: t("filter.all"), count: all.length },
+              { value: "running", label: t("filter.running"), count: running },
+              {
+                value: "stopped",
+                label: t("filter.stopped"),
+                count: all.length - running,
+              },
+            ]}
+          />
+          <span className="ml-auto text-xs text-muted-foreground">
+            {t("filter.summary", {
+              count: all.length,
+              running,
+              hosts: hosts.length,
+            })}
+          </span>
+        </div>
+      ) : undefined;
+
     return (
       <PanelShell
         title={t("hosts.title")}
         icon={<HawIcon className="size-4" />}
+        toolbar={toolbar}
         status={
           <span className="text-xs text-muted-foreground">
             {t(`role.${me.role}`)}
@@ -163,6 +214,8 @@ export function createHawTab(app: TermixApp) {
                 role={me.role}
                 isVisible={isVisible}
                 shell={shell}
+                filter={{ text, state }}
+                onVms={onVms}
                 onRemoved={() => void load()}
               />
             ))}
