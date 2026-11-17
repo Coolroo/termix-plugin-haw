@@ -1,7 +1,7 @@
 {
   "id": "haw",
   "name": "Hundred Acre Wood",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A VM manager for any host you add: see every VM, start, stop and restart them, and open their consoles, through one fixed command on each host.",
   "author": {
     "name": "Coolroo"

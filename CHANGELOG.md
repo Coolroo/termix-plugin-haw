@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+### Changed
+
+- The VM list keeps up by itself: while the tab is on screen, it reads each host's VMs again 2 seconds after the last read ended, so a VM that starts, stops or changes on the host shows without a click. A read never starts while another one or a power action is still running.
+
 ## 1.0.0
 
 ### Added

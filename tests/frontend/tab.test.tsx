@@ -324,3 +324,38 @@ describe("consoles", () => {
     expect(screen.queryByText("Link a host")).toBeNull();
   });
 });
+
+describe("keeping up with the host", () => {
+  it("reads the list again every 2 seconds while the tab is visible", async () => {
+    const api = fakeApi({ role: "viewer", vms: [vm("web-1")] });
+    await render(api);
+    await screen.findByTestId("vm-web-1");
+    const reads = () =>
+      api.get.mock.calls.filter(([url]) => url === "/hosts/1/vms").length;
+    const first = reads();
+    await waitFor(() => expect(reads()).toBeGreaterThan(first), {
+      timeout: 4000,
+    });
+  });
+
+  it("shows a change on the host without a click", async () => {
+    let state: VmView["state"] = "running";
+    const api = fakeApi({ role: "viewer" });
+    api.get.mockImplementation(async (url: string) => {
+      if (url === "/me") return { data: me("viewer") };
+      if (url === "/hosts") return { data: [vmHost] };
+      return { data: { vms: [vm("web-1", { state })] } };
+    });
+    await render(api);
+    const row = await screen.findByTestId("vm-web-1");
+    expect(within(row).getByText("Running")).toBeTruthy();
+    state = "off";
+    await waitFor(
+      () =>
+        expect(
+          within(screen.getByTestId("vm-web-1")).getByText("Off"),
+        ).toBeTruthy(),
+      { timeout: 4000 },
+    );
+  });
+});

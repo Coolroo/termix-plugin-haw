@@ -4,7 +4,7 @@
  * forbid; the page only hides buttons that can't work.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   usePluginApi,
   useTranslation,
@@ -38,6 +38,13 @@ const POWER: Record<
   restart: { verb: "restart", force: false, destructive: true },
   reset: { verb: "restart", force: true, destructive: true },
 };
+
+/**
+ * How long the list waits after one read before the next, while the tab is
+ * on screen. A read only starts when the last one ended, so a slow host is
+ * never asked twice at once.
+ */
+export const POLL_MS = 2000;
 
 /** The buttons a VM in this state gets. */
 export function powerActions(vm: VmView): PowerAction[] {
@@ -92,8 +99,22 @@ export function HostCard({
     }
   }, [api, host.id]);
 
+  // An action in flight reads the list itself when it ends.
+  const busyRef = useRef(false);
+
   useEffect(() => {
-    if (isVisible) void load();
+    if (!isVisible) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (!busyRef.current) await load();
+      if (!stopped) timer = setTimeout(() => void tick(), POLL_MS);
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [isVisible, load]);
 
   async function power(vm: VmView, action: PowerAction) {
@@ -106,6 +127,7 @@ export function HostCard({
     });
     if (!yes) return;
     setBusy(vm.name);
+    busyRef.current = true;
     try {
       const done = (
         await api.post<{ vm: VmView }>(
@@ -122,6 +144,7 @@ export function HostCard({
     } catch (failure) {
       toast.error(refusal(failure).error);
     } finally {
+      busyRef.current = false;
       setBusy(null);
       void load();
     }

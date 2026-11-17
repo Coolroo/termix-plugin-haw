@@ -3,6 +3,7 @@ import {
   execResult,
   fakeHost,
   host,
+  manifest,
   OPERATOR,
   OWNER,
   seedVmHost,
@@ -30,7 +31,7 @@ describe("who may do what", () => {
     const server = await start({ permissions: OPERATOR });
     const me = await server.call("GET", "/me");
     expect(me.body.role).toBe("operator");
-    expect(me.body.version).toBe("1.0.0");
+    expect(me.body.version).toBe(manifest.version);
     expect(me.body.interfaces[0].id).toBe("hyper-v");
     expect(
       me.body.interfaces[0].setup.map((s: { textKey: string }) => s.textKey),
