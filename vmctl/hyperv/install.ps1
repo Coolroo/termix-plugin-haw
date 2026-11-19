@@ -480,7 +480,37 @@ function Test-WorkerTaskState {
     $mine = @($aces | Where-Object { ($_ -split ';')[-1] -eq $AccountSid })
     if ($mine.Count -ne 1) { return $false }
     $f = $mine[0] -split ';'
-    return [bool]($f[0] -eq 'A' -and @('GRGX', 'GXGR', '0xa0000000', '0xA0000000') -contains $f[2])
+    if ($f[0] -ne 'A') { return $false }
+    # Task Scheduler stores GRGX as the file rights it stands for (0x1200a9), so
+    # compare numbers, without Synchronize (BUG-009, seen on a real host).
+    $mask = ConvertTo-FileAccessMask $f[2]
+    return [bool]($mask -ge 0 -and ($mask -band (-bnot [long]$script:RightsSync)) -eq $script:RightsReadExecute)
+}
+
+# An SDDL access right (0x1200a9, FRFX, GRGX ...) as file rights, generic rights
+# mapped the way NTFS maps them; -1 for a right this does not know.
+function ConvertTo-FileAccessMask {
+    param([string]$Rights)
+    if ($Rights -match '^0[xX][0-9a-fA-F]{1,8}$') { $mask = [Convert]::ToInt64($Rights.Substring(2), 16) }
+    elseif ($Rights -match '^([A-Z]{2})+$') {
+        $codes = @{
+            GA = 0x10000000; GR = 2147483648; GW = 0x40000000; GX = 0x20000000
+            FA = 0x1F01FF; FR = 0x120089; FW = 0x120116; FX = 0x1200A0
+            RC = 0x20000; SD = 0x10000; WD = 0x40000; WO = 0x80000
+        }
+        $mask = [long]0
+        for ($i = 0; $i -lt $Rights.Length; $i += 2) {
+            $code = $Rights.Substring($i, 2)
+            if (-not $codes.ContainsKey($code)) { return [long]-1 }
+            $mask = $mask -bor [long]$codes[$code]
+        }
+    }
+    else { return [long]-1 }
+    $generic = @(@(0x10000000, 0x1F01FF), @(2147483648, 0x120089), @(0x40000000, 0x120116), @(0x20000000, 0x1200A0))
+    foreach ($g in $generic) {
+        if (($mask -band [long]$g[0]) -ne 0) { $mask = ($mask -band (-bnot [long]$g[0])) -bor [long]$g[1] }
+    }
+    return [long]$mask
 }
 
 # ------------------------------------------------------------------ the sshd restart script
@@ -633,20 +663,25 @@ function Invoke-Icacls {
     if ($LASTEXITCODE -ne 0) { throw ('icacls ' + ($Arguments -join ' ') + ' failed: ' + $out) }
 }
 
-# Exactly the spec's entries, nothing inherited, owner Administrators. Full
-# control first (replacing), then every other SID removed, then the account's
-# entries added one by one (one /grant:r per SID would keep only the last).
+# Exactly the spec's entries, nothing inherited, owner Administrators. The
+# owner first: setting it makes Windows turn OWNER RIGHTS entries inherit-only
+# and drop their (OI), so an entry granted before it does nothing (BUG-009,
+# seen on a real host). Then full control (replacing), then every other SID
+# removed, then the account's entries added one by one (one /grant:r per SID
+# would keep only the last). The spec's own SIDs are removed too: Get-Acl does
+# not show an OWNER RIGHTS entry that lost its (OI), but icacls still finds it.
 function Set-AclSpec {
     param([string]$Path, [object[]]$Spec)
     $full = @($Spec | Where-Object { $_.Sid -eq $script:SidSystem -or $_.Sid -eq $script:SidAdministrators })
     $rest = @($Spec | Where-Object { $_.Sid -ne $script:SidSystem -and $_.Sid -ne $script:SidAdministrators })
+    Invoke-Icacls @($Path, '/setowner', ('*' + $script:SidAdministrators))
     Invoke-Icacls @($Path, '/inheritance:r')
     Invoke-Icacls (@($Path, '/grant:r') + @($full | ForEach-Object { '*' + $_.Sid + ':' + $_.Grant }))
-    foreach ($sid in @(@((Get-AclFacts $Path).Rules) | ForEach-Object { $_.Sid } | Sort-Object -Unique)) {
+    $seen = @(@((Get-AclFacts $Path).Rules) | ForEach-Object { $_.Sid })
+    foreach ($sid in @(@($seen) + @($rest | ForEach-Object { $_.Sid }) | Sort-Object -Unique)) {
         if ($sid -ne $script:SidSystem -and $sid -ne $script:SidAdministrators) { Invoke-Icacls @($Path, '/remove', ('*' + $sid)) }
     }
     foreach ($e in $rest) { Invoke-Icacls @($Path, '/grant', ('*' + $e.Sid + ':' + $e.Grant)) }
-    Invoke-Icacls @($Path, '/setowner', ('*' + $script:SidAdministrators))
 }
 
 function Reset-FileAcl {

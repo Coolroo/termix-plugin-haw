@@ -74,6 +74,14 @@ inherited and Administrators as the owner:
 | CREATOR OWNER          | files only                | `RD,WD,AD,REA,WEA,RA,WA,S`             | The account may write the `.req` it made, and no other file.                                                                                                                                                                                                               |
 | OWNER RIGHTS           | files only                | `RA,S`                                 | The owner of a file gets no implicit `WRITE_DAC` or `READ_CONTROL`, so the account can't change the access list of its own `.req`.                                                                                                                                         |
 
+`install.ps1` sets the folder's owner before it grants these entries. Setting
+an owner makes Windows turn every OWNER RIGHTS entry inherit-only and drop its
+"files" flag (`(OI)`), so an entry granted before the owner applies to nothing.
+`install.ps1` 1.0.0 to 1.0.3 set the owner last, and their queue had a dead
+OWNER RIGHTS entry: run `install.ps1` from 1.0.4 or later once to repair it.
+`icacls C:\ProgramData\haw\queue` shows the right entry as
+`OWNER RIGHTS:(OI)(IO)(S,RA)`, and a dead one as `OWNER RIGHTS:(IO)(S,RA)`.
+
 What the account can't do:
 
 - **Change, replace or delete a reply.** A `.rep` is created by SYSTEM, so the

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4
+
+### Fixed
+
+- **The queue's OWNER RIGHTS entry works.** `install.ps1` set the queue folder's owner after its entries, and Windows then drops the OWNER RIGHTS entry's "files" flag, so the entry did nothing: the vmctl account could change the access list of a request file it made. `install.ps1` now sets the owner first, and removes a dead entry before it grants the entry again. Run `install.ps1` once on each Hyper-V host to repair the queue.
+- **`install.ps1` reports only real changes.** It reported SET for the queue access and the worker task on every run: the queue because of the dead entry, the task because Task Scheduler stores the account's "read and run" right as `0x1200a9`, not as the `GRGX` that `install.ps1` writes. It now compares the right as a number, so a second run ends with `CHANGED 0`.
+
 ## 1.0.3
 
 ### Added

@@ -320,6 +320,32 @@ Describe 'the access lists' {
     }
 }
 
+Describe 'setting an access list (icacls order)' {
+    BeforeEach {
+        $script:IcaclsCalls = New-Object System.Collections.ArrayList
+        Mock Invoke-Icacls { $null = $script:IcaclsCalls.Add(($Arguments -join ' ')) }
+        # Get-Acl does not show an OWNER RIGHTS entry that lost its (OI): only the account here.
+        Mock Get-AclFacts { [pscustomobject]@{ Owner = $script:SidAdministrators; Protected = $true; Rules = @([pscustomobject]@{ Sid = $script:AccountSid; Rights = 0xA2; Flags = 'this'; Allow = $true; Inherited = $false }) } }
+    }
+    It 'sets the owner before any grant, because a later owner change strips OWNER RIGHTS'' (OI) (BUG-009)' {
+        Set-AclSpec -Path 'C:\q' -Spec (Get-AclSpec 'queue' $script:AccountSid)
+        $script:IcaclsCalls[0] | Should -BeExactly 'C:\q /setowner *S-1-5-32-544'
+        @($script:IcaclsCalls | Where-Object { $_ -like '*/setowner*' }).Count | Should -Be 1
+    }
+    It 'removes the spec''s own SIDs before it grants them, also when Get-Acl does not show them' {
+        Set-AclSpec -Path 'C:\q' -Spec (Get-AclSpec 'queue' $script:AccountSid)
+        $calls = @($script:IcaclsCalls)
+        foreach ($sid in @($script:AccountSid, $script:SidCreatorOwner, $script:SidOwnerRights)) {
+            $remove = [array]::IndexOf($calls, 'C:\q /remove *' + $sid)
+            $remove | Should -BeGreaterThan 0
+            $grant = @(0..($calls.Count - 1) | Where-Object { $calls[$_].StartsWith('C:\q /grant *' + $sid + ':') })[0]
+            $grant | Should -BeGreaterThan $remove
+        }
+        @($calls | Where-Object { $_ -eq 'C:\q /remove *S-1-5-18' -or $_ -eq 'C:\q /remove *S-1-5-32-544' }).Count | Should -Be 0
+        $calls | Should -Contain 'C:\q /grant *S-1-3-4:(OI)(IO)(RA,S)'
+    }
+}
+
 Describe 'the worker task' {
     It 'has an access list built from the account''s SID: SYSTEM and Administrators full, the account read and run' {
         New-WorkerTaskSddl 'S-1-5-21-1-2-3-1001' | Should -BeExactly 'D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;GRGX;;;S-1-5-21-1-2-3-1001)'
@@ -333,6 +359,27 @@ Describe 'the worker task' {
         $normal = 'O:BAG:SYD:(A;;FA;;;BA)(A;;FA;;;SY)(A;;0xa0000000;;;' + $script:AccountSid + ')'
         Test-WorkerTaskState -State (New-GoodTaskState $a $normal) -Arguments $a -AccountSid $script:AccountSid | Should -BeTrue
     }
+    It 'takes the task as Task Scheduler stores it on a real host (BUG-009)' {
+        # GetSecurityDescriptor(4) on a real host: GRGX comes back as 0x1200a9, with inherited entries.
+        $a = New-WorkerTaskArguments 'C:\x\vmctl-worker.ps1'
+        $real = 'D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1200a9;;;' + $script:AccountSid + ')(A;ID;0x1f019f;;;BA)(A;ID;0x1f019f;;;SY)(A;ID;FA;;;BA)(A;;FR;;;SY)'
+        Test-WorkerTaskState -State (New-GoodTaskState $a $real) -Arguments $a -AccountSid $script:AccountSid | Should -BeTrue
+        $named = 'D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;FRFX;;;' + $script:AccountSid + ')'
+        Test-WorkerTaskState -State (New-GoodTaskState $a $named) -Arguments $a -AccountSid $script:AccountSid | Should -BeTrue
+    }
+    It 'reads an SDDL right as file rights: <Rights> is <Mask>' -TestCases @(
+        @{ Rights = 'GRGX'; Mask = 0x1200A9 },
+        @{ Rights = 'GXGR'; Mask = 0x1200A9 },
+        @{ Rights = 'FRFX'; Mask = 0x1200A9 },
+        @{ Rights = '0x1200a9'; Mask = 0x1200A9 },
+        @{ Rights = '0xA0000000'; Mask = 0x1200A9 },
+        @{ Rights = 'GA'; Mask = 0x1F01FF },
+        @{ Rights = 'FA'; Mask = 0x1F01FF },
+        @{ Rights = 'ZZ'; Mask = -1 },
+        @{ Rights = 'GRG'; Mask = -1 }
+    ) {
+        ConvertTo-FileAccessMask $Rights | Should -Be ([long]$Mask)
+    }
     It 'refuses <Why>' -TestCases @(
         @{ Why = 'no task'; Change = { param($s) $s.Exists = $false } },
         @{ Why = 'other arguments'; Change = { param($s) $s.Arguments = $s.Arguments + ' -ConfigPath x' } },
@@ -342,6 +389,10 @@ Describe 'the worker task' {
         @{ Why = 'another time limit'; Change = { param($s) $s.TimeLimit = 'PT72H' } },
         @{ Why = 'a trigger'; Change = { param($s) $s.TriggerCount = 1 } },
         @{ Why = 'full control for the account'; Change = { param($s) $s.Sddl = $s.Sddl.Replace('GRGX', 'FA') } },
+        @{ Why = 'read, run and write for the account'; Change = { param($s) $s.Sddl = $s.Sddl.Replace('GRGX', '0x1201bf') } },
+        @{ Why = 'read only for the account'; Change = { param($s) $s.Sddl = $s.Sddl.Replace('GRGX', 'FR') } },
+        @{ Why = 'a right it does not know'; Change = { param($s) $s.Sddl = $s.Sddl.Replace('GRGX', 'GRXX') } },
+        @{ Why = 'a deny entry for the account'; Change = { param($s) $s.Sddl = $s.Sddl.Replace('(A;;GRGX;', '(D;;GRGX;') } },
         @{ Why = 'a second entry for the account'; Change = { param($s) $s.Sddl = $s.Sddl + '(A;;GW;;;' + $script:AccountSid + ')' } },
         @{ Why = 'no entry for the account'; Change = { param($s) $s.Sddl = 'D:(A;;FA;;;BA)(A;;FA;;;SY)' } }
     ) {
