@@ -44,7 +44,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 
 ## Requirements
 
-Termix 26.11.0 or later (plugin API 1.13). Consoles need the Remote Desktop plugin. A Hyper-V host needs Windows with Hyper-V and the OpenSSH server.
+Termix 26.11.0 or later: one build runs on plugin API 1.13 and later 1.x (Termix 26.11.0 and 26.11.1) and on plugin API 2.9 (Termix 26.11.2 and later). Consoles need the Remote Desktop plugin. A Hyper-V host needs Windows with Hyper-V and the OpenSSH server.
 
 <br />
 

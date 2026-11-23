@@ -28,10 +28,11 @@ Declare it in your manifest, as optional, so your plugin works without HAW:
 ```
 
 Then get it in your backend. While HAW is not running, the handle is an
-empty object:
+empty object. Under plugin API 2 (Termix 26.11.2 and later) `services.get`
+answers with a Promise; `await` works on both versions:
 
 ```ts
-const vms = ctx.services.get<VmService>("haw.vms");
+const vms = await ctx.services.get<VmService>("haw.vms");
 if (!("list" in vms)) {
   // HAW is not installed or not running.
 }
@@ -56,6 +57,11 @@ service.
    `bindPlugin` with your id only sends your key to you. HAW gives a key only
    to a plugin on the admin's list.
 3. Pass the key in the caller, the first argument of every call.
+
+Under plugin API 2, your manifest must list the receiver's key in its
+`sandbox` block (`"sandbox": { "registry": ["<your plugin id>.hawVmsKey"] }`),
+or `ctx.registry.provide` throws. HAW 1.0.5 and later wait for the receiver
+that core hands over as a Promise there.
 
 Anyone may call your receiver, so take a key only while your own
 `bindPlugin` call runs. HAW makes new keys each time it starts: when a call
@@ -165,7 +171,7 @@ A consumer plugin with the id `runbooks`:
 ```ts
 let binding = false;
 let key: string | null = null;
-ctx.registry.provide("runbooks.hawVmsKey", (given: string) => {
+await ctx.registry.provide("runbooks.hawVmsKey", (given: string) => {
   if (!binding) throw new Error("not binding");
   key = given;
 });
@@ -179,7 +185,7 @@ async function bind(vms: VmService) {
   }
 }
 
-const vms = ctx.services.get<VmService>("haw.vms");
+const vms = await ctx.services.get<VmService>("haw.vms");
 if (!key) await bind(vms);
 const caller = {
   plugin: "runbooks",
