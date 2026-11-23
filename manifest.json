@@ -1,7 +1,7 @@
 {
   "id": "haw",
   "name": "Hundred Acre Wood",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "A VM manager for any host you add: see every VM, start, stop and restart them, and open their consoles, through one fixed command on each host.",
   "author": {
     "name": "Coolroo"
@@ -25,7 +25,7 @@
   "env": [],
   "engine": {
     "termix": ">=26.11.0",
-    "api": "^1.13"
+    "api": "^1.13 || ^2.9"
   },
   "capabilities": [
     "db:own",

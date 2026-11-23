@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.5
+
+### Changed
+
+- **One build for Termix 26.11.0 and 26.11.2 or later.** The manifest allows plugin API 1.13 and plugin API 2.9 (`"api": "^1.13 || ^2.9"`). On Termix 26.11.0, HAW runs as before. On Termix 26.11.2 or later, HAW runs in its own process and its tab in a sandboxed frame. HAW needs no `sandbox` block: it has no timers, event listeners or registry values of its own.
+- HAW's icon is Lucide's **Trees** icon, the same drawing. Termix 26.11.2 draws only Lucide icons in the rail and on the tab; it showed a puzzle piece for the old icon.
+
+### Fixed
+
+- **The VM service binds under plugin API 2.** `bindPlugin` now waits for the consumer's receiver from `ctx.registry.consume`, which plugin API 2 gives as a Promise. Before, a plugin like Runbooks got `no-receiver` and could not use VM steps on Termix 26.11.2.
+
+### Security
+
+- **Termix API keys under plugin API 2.** Termix 26.11.2 and later do not tell a plugin process whether a request came in on a Termix API key (`tmx_...`), so HAW can't refuse API keys there as it does on Termix 26.11.0: a request with an admin's API key reaches HAW's routes as that admin. On Termix 26.11.0 nothing changes.
+
 ## 1.0.4
 
 ### Fixed

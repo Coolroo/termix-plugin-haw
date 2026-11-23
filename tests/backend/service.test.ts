@@ -85,6 +85,23 @@ describe("the handshake", () => {
     expect(hosts[0].verbs).toContain("start");
   });
 
+  it("binds when ctx.registry.consume answers with a Promise (plugin API 2)", async () => {
+    const { server } = await withVmHost(start, { settings: ALLOW });
+    const runbooks = consumer(server, "runbooks");
+    const registry = server.mock.ctx.registry as {
+      consume: (key: string) => unknown;
+    };
+    const sync = registry.consume;
+    // Under plugin API 2 the receiver lives in the consumer's own process,
+    // and core hands it over as a Promise.
+    registry.consume = (key) => Promise.resolve(sync(key));
+    await runbooks.bind();
+    expect(runbooks.key()).toMatch(/^[0-9a-f]{64}$/);
+    await expect(service(server).hosts(runbooks.caller())).resolves.toEqual([
+      expect.objectContaining({ hostId: 1, name: "hv-1" }),
+    ]);
+  });
+
   it("allows no plugin by default", async () => {
     const { server } = await withVmHost(start);
     const runbooks = consumer(server, "runbooks");
