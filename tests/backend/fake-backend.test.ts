@@ -52,6 +52,7 @@ describe("the fake back end", () => {
           "start",
           "stop",
           "restart",
+          "resume",
           "console-info",
         ],
         limits: { protected: ["build-*"] },
@@ -230,6 +231,109 @@ describe("the fake back end", () => {
           vmId: "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b03",
         },
       },
+    });
+  });
+});
+
+describe("a paused VM", () => {
+  function paused(
+    config: Record<string, unknown> = {},
+    extra: Record<string, unknown> = {},
+  ) {
+    let state = defaultState();
+    const vm = state.vms.find((v) => v.name === "build-1")!;
+    Object.assign(vm, {
+      state: "paused",
+      critical: true,
+      status: "Paused-Critical",
+      drive: { name: "D:", sizeGB: 930.7, freeGB: 3.2 },
+    });
+    Object.assign(state, extra);
+    const send = (verb: string, args: Record<string, unknown> = {}) => {
+      const request = buildRequest("t-1", verb as Verb, args);
+      const out = handleLine(encodeRequest(request).trim(), {
+        load: () => ({ state, configText: JSON.stringify(config) }),
+        save: (next) => {
+          state = next;
+        },
+      });
+      return parseReply(out, request);
+    };
+    return { send, state: () => state };
+  }
+
+  it("lists its status and critical mark, and shows its drive", () => {
+    const h = paused();
+    const list = h.send("list");
+    expect(list).toMatchObject({
+      ok: true,
+      result: {
+        vms: [
+          { name: "build-1", state: "paused", critical: true },
+          { name: "test-vm1", status: "Operating normally", critical: false },
+          { name: "web-1" },
+        ],
+      },
+    });
+    expect(h.send("show", { name: "build-1" })).toMatchObject({
+      ok: true,
+      result: { vm: { drive: { name: "D:", freeGB: 3.2 } } },
+    });
+    expect(h.send("show", { name: "web-1" })).toMatchObject({
+      ok: true,
+      result: { vm: { drive: { name: "/", freeGB: 300 } } },
+    });
+  });
+
+  it("is refused a start, with the advice to resume", () => {
+    expect(paused().send("start", { name: "build-1" })).toMatchObject({
+      ok: false,
+      error: { code: "wrong-state", message: expect.stringMatching(/resume/) },
+    });
+  });
+
+  it("resumes, also when protected and at the ceilings, and refuses a VM that is not paused", () => {
+    // build-1 holds 4 CPUs while paused; the ceiling counts running VMs only.
+    const h = paused({ protected: ["build-*"], ceilings: { cpus: 2 } });
+    expect(h.send("resume", { name: "build-1" })).toMatchObject({
+      ok: true,
+      result: { vm: { state: "running", critical: false } },
+    });
+    expect(h.state().vms.find((vm) => vm.name === "build-1")?.state).toBe(
+      "running",
+    );
+    expect(h.send("resume", { name: "build-1" })).toMatchObject({
+      ok: false,
+      error: { code: "wrong-state" },
+    });
+    expect(h.send("resume", { name: "test-vm1" })).toMatchObject({
+      ok: false,
+      error: { code: "wrong-state" },
+    });
+    expect(h.send("resume", { name: "web-1", force: true })).toMatchObject({
+      ok: false,
+      error: { code: "bad-request" },
+    });
+  });
+
+  it("refuses a resume outside the name pattern", () => {
+    expect(
+      paused({ namePattern: "^web-" }).send("resume", { name: "build-1" }),
+    ).toMatchObject({ ok: false, error: { code: "name-not-allowed" } });
+  });
+
+  it("acts as an older vmctl when the state limits the verbs", () => {
+    const old = paused(
+      {},
+      { verbs: ["info", "list", "show", "start", "stop", "restart"] },
+    );
+    const info = old.send("info");
+    expect(info.ok && (info.result as { verbs: string[] }).verbs).not.toContain(
+      "resume",
+    );
+    expect(old.send("resume", { name: "build-1" })).toMatchObject({
+      ok: false,
+      error: { code: "unknown-verb" },
     });
   });
 });

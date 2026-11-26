@@ -336,6 +336,96 @@ describe("VMs", () => {
     ]);
   });
 
+  it("resumes a paused VM like a start: an operator may, a viewer may not, the protect list allows it", async () => {
+    const paused = () => {
+      const fake = fakeHost({ protected: ["build-*"] });
+      Object.assign(
+        fake.state.vms.find((vm) => vm.name === "build-1")!,
+        {
+          state: "paused",
+          critical: true,
+          status: "Paused-Critical",
+          drive: { name: "D:", sizeGB: 930.7, freeGB: 3.2 },
+        },
+      );
+      return { 1: fake };
+    };
+    const viewer = await start({ permissions: VIEWER, fakes: paused() });
+    seedVmHost(viewer.db, 1);
+    expect(
+      (await viewer.call("POST", "/hosts/1/vms/build-1/resume")).status,
+    ).toBe(403);
+
+    const { server, id } = await withVmHost(start, { fakes: paused() });
+    const listed = await server.call("GET", `/hosts/${id}/vms`);
+    expect(
+      listed.body.vms.find((vm: { name: string }) => vm.name === "build-1"),
+    ).toMatchObject({
+      state: "paused",
+      critical: true,
+      status: "Paused-Critical",
+    });
+    const shown = await server.call("GET", `/hosts/${id}/vms/build-1`);
+    expect(shown.body.vm.drive).toEqual({
+      name: "D:",
+      sizeGB: 930.7,
+      freeGB: 3.2,
+    });
+    const started = await server.call("POST", `/hosts/${id}/vms/build-1/start`);
+    expect(started.status).toBe(409);
+    expect(started.body.error).toMatch(/resume it instead/);
+    const resumed = await server.call(
+      "POST",
+      `/hosts/${id}/vms/build-1/resume`,
+      { force: true },
+    );
+    expect(resumed.status).toBe(200);
+    expect(resumed.body.vm).toMatchObject({
+      name: "build-1",
+      state: "running",
+      critical: false,
+    });
+    // Resume sends only the name, as start does, whatever the body says.
+    const sent = server.execCalls.map((call) =>
+      JSON.parse(String(call.options?.stdin)),
+    );
+    expect(sent.at(-1)).toMatchObject({
+      verb: "resume",
+      args: { name: "build-1" },
+    });
+    expect(sent.at(-1).args).not.toHaveProperty("force");
+    const record = await server.call("GET", "/actions");
+    expect(
+      record.body
+        .slice(0, 2)
+        .map((a: { action: string; ok: boolean }) => [a.action, a.ok]),
+    ).toEqual([
+      ["resume", true],
+      ["start", false],
+    ]);
+    expect(server.mock.audits.at(-1)).toMatchObject({
+      action: "haw.resume",
+      resourceName: "build-1",
+      success: true,
+    });
+  });
+
+  it("says what to do when the host's vmctl is older than resume", async () => {
+    const fake = fakeHost();
+    fake.state.verbs = ["info", "list", "show", "start", "stop", "restart"];
+    fake.state.vms[0].state = "paused";
+    const { server, id } = await withVmHost(start, { fakes: { 1: fake } });
+    const hosts = await server.call("GET", "/hosts");
+    expect(hosts.body[0].info.verbs).not.toContain("resume");
+    const resumed = await server.call(
+      "POST",
+      `/hosts/${id}/vms/build-1/resume`,
+    );
+    expect(resumed.status).toBe(409);
+    expect(resumed.body).toMatchObject({ code: "unknown-verb" });
+    expect(resumed.body.error).toMatch(/install\.ps1.*Refresh/);
+  });
+
   it("passes the host's refusals on, and records them", async () => {
     const { server, id } = await withVmHost(start, {
       fakes: {

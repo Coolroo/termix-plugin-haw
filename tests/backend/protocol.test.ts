@@ -9,6 +9,7 @@ import {
   toConsole,
   toInfo,
   toVm,
+  toVmDetail,
   toVmList,
 } from "../../src/shared/protocol";
 
@@ -152,7 +153,36 @@ describe("result checks", () => {
       addresses: ["192.0.2.1"],
       allowed: false,
       protected: true,
+      status: "",
+      critical: false,
     });
+  });
+
+  it("reads a VM's status and critical mark, and a show's drive", () => {
+    const vm = toVmDetail({
+      name: "build-2",
+      state: "paused",
+      status: "Paused-Critical",
+      critical: true,
+      drive: { name: "D:", sizeGB: 930.7, freeGB: 3.2, path: "D:\\x" },
+    });
+    expect(vm).toMatchObject({
+      state: "paused",
+      status: "Paused-Critical",
+      critical: true,
+      drive: { name: "D:", sizeGB: 930.7, freeGB: 3.2 },
+    });
+    expect(vm.drive).not.toHaveProperty("path");
+    expect(toVm({ name: "a", critical: "yes", status: 5 })).toMatchObject({
+      critical: false,
+      status: "",
+    });
+    // A back end older than 1.1.0 sends no drive; a broken one is dropped.
+    expect(toVmDetail({ name: "a" }).drive).toBeNull();
+    expect(toVmDetail({ name: "a", drive: { name: "D:" } }).drive).toBeNull();
+    expect(
+      toVmDetail({ name: "a", drive: { sizeGB: 1, freeGB: 1 } }).drive,
+    ).toBeNull();
   });
 
   it("refuses a VM with no name, and a list that is not one", () => {

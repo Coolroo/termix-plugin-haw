@@ -15,7 +15,7 @@
     "Add any Termix host as a VM host and choose its interface (Hyper-V in 1.0)",
     "HAW runs one fixed command on the host, vmctl, as an account that can do nothing else",
     "Every VM on each host with its state, size, addresses and uptime",
-    "Start, shut down, turn off and restart, with a confirm",
+    "Start, resume, shut down, turn off and restart, with a confirm",
     "The host keeps its own limits: a name pattern, a protect list and ceilings that HAW can't change",
     "Open a VM's console in the Remote Desktop plugin",
     "Three roles: owner, operator and viewer",
@@ -38,7 +38,7 @@
   "provides": [
     {
       "service": "haw.vms",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "permission": "haw.view"
     }
   ],

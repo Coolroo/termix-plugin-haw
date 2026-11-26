@@ -13,7 +13,7 @@
     },
     "operate": {
       "title": "Power VMs (operator)",
-      "description": "Start, shut down, turn off and restart VMs, and open their consoles. Includes See VMs."
+      "description": "Start, resume, shut down, turn off and restart VMs, and open their consoles. Includes See VMs."
     },
     "manage": {
       "title": "Manage VM hosts (owner)",
@@ -23,7 +23,7 @@
   "settings": {
     "servicePlugins": {
       "label": "Plugins that may act for a person",
-      "description": "Plugin ids, one a line, that may use HAW's VM service (haw.vms) to list, start, stop and restart VMs and open consoles for the person who uses them, with that person's HAW role. Empty: no plugin may. Add runbooks for VM steps in Runbooks.",
+      "description": "Plugin ids, one a line, that may use HAW's VM service (haw.vms) to list, start, resume, stop and restart VMs and open consoles for the person who uses them, with that person's HAW role. Empty: no plugin may. Add runbooks for VM steps in Runbooks.",
       "placeholder": "runbooks"
     }
   },
@@ -124,6 +124,13 @@
     "notes": "Notes",
     "lastAction": "Last action",
     "noAction": "No actions from HAW yet",
+    "stateCritical": "{{state}}-Critical",
+    "pausedCritical": "Hyper-V paused this VM (Paused-Critical): it can't write to its disk. Hyper-V does this by itself, most often when the drive with the VM's disk is almost full.",
+    "pausedPlain": "This VM is paused. Resume lets it run on from where it stopped.",
+    "status": "Hyper-V says: {{status}}",
+    "driveFree": "Drive {{name}}: {{free}} GB free of {{size}} GB",
+    "lowDrive": "Hyper-V pauses a VM when its disk drive is almost full: free space first, then Resume.",
+    "noResume": "This host's vmctl can't resume a VM yet: run the host's setup (install.ps1) of this HAW version again, then press Refresh.",
     "states": {
       "running": "Running",
       "off": "Off",
@@ -136,6 +143,7 @@
   },
   "actions": {
     "start": "Start",
+    "resume": "Resume",
     "shutdown": "Shut down",
     "turnoff": "Turn off",
     "restart": "Restart",
@@ -143,6 +151,7 @@
     "console": "Console",
     "confirm": {
       "start": "Start {{name}}?",
+      "resume": "Resume {{name}}?",
       "shutdown": "Shut down {{name}}?",
       "turnoff": "Turn off {{name}}?",
       "restart": "Restart {{name}}?",
@@ -150,6 +159,7 @@
     },
     "explain": {
       "start": "The host starts the VM.",
+      "resume": "The VM runs on from where it was paused. If Hyper-V paused it because its drive is almost full, free space on that drive first, or Hyper-V pauses it again.",
       "shutdown": "The host asks the guest to shut down. Unsaved work in the guest may be lost.",
       "turnoff": "Like pulling the plug: the VM stops at once and unsaved work is lost.",
       "restart": "The guest shuts down, then the VM starts again.",

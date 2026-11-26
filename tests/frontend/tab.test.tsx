@@ -36,6 +36,8 @@ const vm = (name: string, extra: Partial<VmView> = {}): VmView => ({
   addresses: ["192.0.2.5"],
   allowed: true,
   protected: false,
+  status: "Operating normally",
+  critical: false,
   consoleHostId: null,
   ...extra,
 });
@@ -47,7 +49,21 @@ const detail = (name: string) => ({
   networks: [{ switch: "lab-net", mac: "00:15:5D:00:00:01", addresses: [] }],
   checkpoints: 3,
   notes: "the web server",
+  drive: { name: "D:", sizeGB: 930.7, freeGB: 410 },
 });
+
+/** VM verbs of a host whose vmctl has resume (1.1.0), and of an older one. */
+const VERBS_NOW = [
+  "info",
+  "list",
+  "show",
+  "start",
+  "stop",
+  "restart",
+  "resume",
+  "console-info",
+];
+const VERBS_OLD = VERBS_NOW.filter((verb) => verb !== "resume");
 
 /** What a VM's details read: `show`, and its last recorded action. */
 const DETAIL_GETS = {
@@ -109,11 +125,16 @@ function fakeApi(options: {
   vms?: VmView[];
   post?: (url: string, body?: unknown) => Promise<{ data: unknown }>;
   get?: Record<string, unknown>;
+  /** The verbs the host's vmctl listed at its last info. */
+  verbs?: string[];
 }) {
+  const host: VmHostView = options.verbs
+    ? { ...vmHost, info: { ...vmHost.info!, verbs: options.verbs } }
+    : vmHost;
   return {
     get: vi.fn(async (url: string) => {
       if (url === "/me") return { data: me(options.role) };
-      if (url === "/hosts") return { data: [vmHost] };
+      if (url === "/hosts") return { data: [host] };
       if (url === "/hosts/1/vms") return { data: { vms: options.vms ?? [] } };
       if (options.get && url in options.get) return { data: options.get[url] };
       throw Object.assign(new Error("not found"), {
@@ -230,20 +251,146 @@ describe("the HAW tab", () => {
 
 describe("power buttons", () => {
   it("follow the state, the protect list and the name pattern", () => {
-    expect(powerActions(vm("a"))).toEqual([
-      "shutdown",
-      "turnoff",
-      "restart",
-      "reset",
+    const actions = (extra: Partial<VmView>) =>
+      powerActions(vm("a", extra), VERBS_NOW);
+    expect(actions({})).toEqual(["shutdown", "turnoff", "restart", "reset"]);
+    expect(actions({ state: "off" })).toEqual(["start"]);
+    expect(actions({ state: "saved" })).toEqual(["start"]);
+    expect(actions({ protected: true })).toEqual([]);
+    expect(actions({ protected: true, state: "off" })).toEqual(["start"]);
+    expect(actions({ allowed: false, state: "off" })).toEqual([]);
+    expect(actions({ state: "stopping" })).toEqual([]);
+  });
+
+  it("give a paused VM Resume, never Start, and only from a host that has it", () => {
+    const paused = vm("a", { state: "paused", critical: true });
+    expect(powerActions(paused, VERBS_NOW)).toEqual(["resume"]);
+    // Like start, the protect list allows a resume.
+    expect(powerActions({ ...paused, protected: true }, VERBS_NOW)).toEqual([
+      "resume",
     ]);
-    expect(powerActions(vm("a", { state: "off" }))).toEqual(["start"]);
-    expect(powerActions(vm("a", { state: "saved" }))).toEqual(["start"]);
-    expect(powerActions(vm("a", { protected: true }))).toEqual([]);
-    expect(powerActions(vm("a", { protected: true, state: "off" }))).toEqual([
-      "start",
-    ]);
-    expect(powerActions(vm("a", { allowed: false, state: "off" }))).toEqual([]);
-    expect(powerActions(vm("a", { state: "stopping" }))).toEqual([]);
+    expect(powerActions({ ...paused, allowed: false }, VERBS_NOW)).toEqual([]);
+    expect(powerActions(paused, VERBS_OLD)).toEqual([]);
+    expect(powerActions(paused, [])).toEqual([]);
+  });
+});
+
+describe("a paused VM", () => {
+  const paused = vm("build-2", {
+    state: "paused",
+    critical: true,
+    status: "Paused-Critical",
+    uptimeSeconds: 0,
+    addresses: [],
+  });
+  const showPaused = (freeGB: number) => ({
+    "/hosts/1/vms/build-2": {
+      vm: {
+        ...detail("build-2"),
+        ...paused,
+        drive: { name: "D:", sizeGB: 930.7, freeGB },
+      },
+    },
+    "/actions": [],
+  });
+
+  it("says why it is paused, warns of a full drive, and offers Resume", async () => {
+    const api = fakeApi({
+      role: "operator",
+      vms: [paused],
+      verbs: VERBS_NOW,
+      get: showPaused(3.2),
+      post: async () => ({ data: { vm: { ...paused, state: "running" } } }),
+    });
+    await render(api);
+    const row = await screen.findByTestId("vm-build-2");
+    expect(within(row).getByText("Paused-Critical")).toBeTruthy();
+    const note = within(row).getByTestId("vm-paused");
+    expect(note.textContent).toContain(locales.vms.pausedCritical);
+    expect(note.textContent).toContain("Hyper-V says: Paused-Critical");
+    // The drive comes from show, which a paused VM reads without a click.
+    expect(
+      (await within(note).findByTestId("vm-paused-drive")).textContent,
+    ).toBe("Drive D:: 3.2 GB free of 930.7 GB");
+    expect(within(note).getByTestId("vm-low-drive").textContent).toBe(
+      locales.vms.lowDrive,
+    );
+    expect(within(row).queryByRole("button", { name: "Start" })).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Resume" }));
+    expect(await screen.findByText("Resume build-2?")).toBeTruthy();
+    expect(api.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByRole("button", { name: "Resume" }).at(-1)!);
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/hosts/1/vms/build-2/resume", {}),
+    );
+  });
+
+  it("gives no warning while the drive has 10 GB or more", async () => {
+    await render(
+      fakeApi({
+        role: "operator",
+        vms: [paused],
+        verbs: VERBS_NOW,
+        get: showPaused(10),
+      }),
+    );
+    const note = await screen.findByTestId("vm-paused");
+    await within(note).findByTestId("vm-paused-drive");
+    expect(within(note).queryByTestId("vm-low-drive")).toBeNull();
+  });
+
+  it("offers no button on a host whose vmctl can't resume, and says what to do", async () => {
+    await render(
+      fakeApi({
+        role: "operator",
+        vms: [paused],
+        verbs: VERBS_OLD,
+        get: showPaused(3.2),
+      }),
+    );
+    const row = await screen.findByTestId("vm-build-2");
+    expect(within(row).getByTestId("vm-no-resume").textContent).toBe(
+      locales.vms.noResume,
+    );
+    expect(
+      within(row).queryByRole("button", { name: /^(Start|Resume)$/ }),
+    ).toBeNull();
+  });
+
+  it("offers Resume once Refresh reads the host's new verbs", async () => {
+    const api = fakeApi({
+      role: "operator",
+      vms: [paused],
+      verbs: VERBS_OLD,
+      get: showPaused(50),
+      post: async (url) =>
+        url === "/hosts/1/refresh"
+          ? { data: { info: { ...vmHost.info!, verbs: VERBS_NOW } } }
+          : { data: {} },
+    });
+    await render(api);
+    const row = await screen.findByTestId("vm-build-2");
+    expect(within(row).queryByRole("button", { name: "Resume" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(
+      await within(row).findByRole("button", { name: "Resume" }),
+    ).toBeTruthy();
+    expect(within(row).queryByTestId("vm-no-resume")).toBeNull();
+  });
+
+  it("gives a viewer the note but no button", async () => {
+    await render(
+      fakeApi({
+        role: "viewer",
+        vms: [paused],
+        verbs: VERBS_NOW,
+        get: showPaused(3.2),
+      }),
+    );
+    const row = await screen.findByTestId("vm-build-2");
+    await within(row).findByTestId("vm-low-drive");
+    expect(within(row).queryByRole("button", { name: "Resume" })).toBeNull();
+    expect(within(row).queryByTestId("vm-no-resume")).toBeNull();
   });
 });
 

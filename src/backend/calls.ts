@@ -6,7 +6,7 @@
 
 import { InputError } from "./errors.js";
 import type { CallFailure, CallResult } from "./vmctl.js";
-import { ProtocolError } from "../shared/protocol.js";
+import { LATER_VERBS, ProtocolError, type Verb } from "../shared/protocol.js";
 import type { Failure } from "../shared/api.js";
 
 /** HTTP status for each way a call fails. */
@@ -46,6 +46,20 @@ export function failure(result: Extract<CallResult, { ok: false }>): Failure {
 export function refuse(result: Extract<CallResult, { ok: false }>): never {
   const { error, ...extra } = failure(result);
   throw new InputError(error, STATUS[result.code], extra);
+}
+
+/**
+ * A host whose vmctl is older than a verb answers "unknown-verb": say what
+ * to do instead (the page hides the button, but a service caller or an old
+ * page may still ask).
+ */
+export function explainVerb(verb: Verb, result: CallResult): CallResult {
+  if (result.ok || result.code !== "unknown-verb") return result;
+  if (!LATER_VERBS.includes(verb)) return result;
+  return {
+    ...result,
+    message: `this host's vmctl can't ${verb} a VM yet: run the host's setup (install.ps1) of this HAW version again, then press Refresh`,
+  };
 }
 
 /** A result the protocol checks turn down is the host's fault: 502. */

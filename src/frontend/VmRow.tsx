@@ -4,11 +4,16 @@
  * opens the VM's details in place: machine, disks, network, notes and the
  * last action HAW recorded for it. On a phone the row has no buttons; they
  * are in the details, large.
+ *
+ * A paused VM shows why under its row: Hyper-V's status, and the free space
+ * on the drive that holds its disk (Hyper-V pauses a VM by itself when that
+ * drive is almost full), with Resume when the host's vmctl offers it.
  */
 
 import { useEffect, useState, type ReactNode } from "react";
 import {
   useCurrentUser,
+  type TranslateFn,
   usePluginApi,
   useTranslation,
 } from "@termix-ssh/plugin-sdk/frontend";
@@ -23,13 +28,24 @@ import {
   type VmView,
 } from "./api";
 import type { PowerAction } from "./HostCard";
+import { LOW_DRIVE_GB, type Drive } from "../shared/protocol";
 
 /** The buttons on the row itself; the rest are in the details. */
 const ROW_ACTIONS: ReadonlySet<PowerAction> = new Set([
   "start",
+  "resume",
   "shutdown",
   "restart",
 ]);
+
+/** The buttons that move the VM on: drawn as the main button. */
+const MAIN_ACTIONS: ReadonlySet<PowerAction> = new Set(["start", "resume"]);
+
+/** Hyper-V's status for a VM that is well: not worth a line. */
+const NORMAL_STATUS = /^operating normally$/i;
+
+export const isLowDrive = (drive: Drive | null | undefined) =>
+  !!drive && drive.freeGB < LOW_DRIVE_GB;
 
 const STATE_DOT = {
   running: "bg-emerald-500",
@@ -47,6 +63,7 @@ export function VmRow({
   vm,
   actions,
   canOperate,
+  canResume,
   mobile,
   open,
   busy,
@@ -60,6 +77,8 @@ export function VmRow({
   /** The power actions this VM's state allows, empty for a viewer. */
   actions: PowerAction[];
   canOperate: boolean;
+  /** The host's vmctl offers resume. */
+  canResume: boolean;
   mobile: boolean;
   open: boolean;
   busy: boolean;
@@ -68,12 +87,16 @@ export function VmRow({
   onConsole: () => void;
 }) {
   const { t } = useTranslation();
+  const paused = vm.state === "paused";
+  // The details, read when they are open, and for a paused VM always: its
+  // note needs the drive.
+  const { detail, error } = useVmDetail(vmHostId, vm, open || paused);
   const rowActions = actions.filter((action) => ROW_ACTIONS.has(action));
   const button = (action: PowerAction, big = false) => (
     <Button
       key={action}
       size={big ? "default" : "xs"}
-      variant={action === "start" ? "default" : "outline"}
+      variant={MAIN_ACTIONS.has(action) ? "default" : "outline"}
       className={big ? "h-11" : undefined}
       disabled={busy}
       onClick={() => onPower(action)}
@@ -132,7 +155,7 @@ export function VmRow({
               )}
             </span>
             <span className="truncate text-xs text-muted-foreground">
-              <span>{t(`vms.states.${vm.state}`)}</span>
+              <span>{stateText(t, vm)}</span>
               {` · ${t("vms.size_value", { cpus: vm.cpus, memory: formatMemory(vm.memoryMB) })}`}
               {vm.addresses.length > 0 && ` · ${vm.addresses.join(", ")}`}
             </span>
@@ -150,15 +173,35 @@ export function VmRow({
           </div>
         )}
       </div>
+      {paused && (
+        <PausedNote
+          vm={vm}
+          drive={detail?.drive ?? null}
+          canResume={canResume}
+          canOperate={canOperate}
+          resumeButton={
+            canOperate && mobile && actions.includes("resume")
+              ? button("resume", true)
+              : null
+          }
+        />
+      )}
       {open && (
         <div className="flex flex-col gap-3 border-t border-dashed border-border px-3 pb-4 pt-3 md:pl-12">
           {canOperate && mobile && (
             <div className="grid grid-cols-2 gap-2" data-testid="vm-actions">
-              {actions.map((action) => button(action, true))}
+              {actions
+                .filter((action) => !(paused && action === "resume"))
+                .map((action) => button(action, true))}
               {consoleButton(true)}
             </div>
           )}
-          <VmDetails vmHostId={vmHostId} termixHostId={termixHostId} vm={vm} />
+          <VmDetails
+            termixHostId={termixHostId}
+            vm={vm}
+            detail={detail}
+            error={error}
+          />
           {canOperate && !mobile && (
             <div className="flex flex-wrap gap-1">
               {actions
@@ -172,26 +215,22 @@ export function VmRow({
   );
 }
 
-/** What `show` says about the VM, and the last action HAW recorded on it. */
-function VmDetails({
-  vmHostId,
-  termixHostId,
-  vm,
-}: {
-  vmHostId: number;
-  termixHostId: number;
-  vm: VmView;
-}) {
-  const { t } = useTranslation();
-  const api = usePluginApi();
-  const me = useCurrentUser();
-  const [detail, setDetail] = useState<VmDetail | null>(null);
-  const [last, setLast] = useState<ActionView | null | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
+/** "Paused", or "Paused-Critical" when the hypervisor marks it critical. */
+function stateText(t: TranslateFn, vm: VmView) {
+  const state = t(`vms.states.${vm.state}`);
+  return vm.critical ? t("vms.stateCritical", { state }) : state;
+}
 
-  // Read again when the state changes: a start or stop changes the
-  // addresses, and records a new last action.
+/**
+ * `show` for one VM while `enabled`. Read again when the state changes: a
+ * start or stop changes the addresses, a resume the status.
+ */
+function useVmDetail(vmHostId: number, vm: VmView, enabled: boolean) {
+  const api = usePluginApi();
+  const [detail, setDetail] = useState<VmDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     let current = true;
     api
       .get<{ vm: VmDetail }>(
@@ -203,6 +242,94 @@ function VmDetails({
         setError(null);
       })
       .catch((failure) => current && setError(refusal(failure).error));
+    return () => {
+      current = false;
+    };
+  }, [api, vmHostId, vm.name, vm.state, vm.critical, enabled]);
+  return { detail, error };
+}
+
+/**
+ * Why a paused VM is paused, in words: Hyper-V's status, the free space on
+ * its drive with a warning when it is almost full, and what to do.
+ */
+function PausedNote({
+  vm,
+  drive,
+  canResume,
+  canOperate,
+  resumeButton,
+}: {
+  vm: VmView;
+  drive: Drive | null;
+  canResume: boolean;
+  canOperate: boolean;
+  resumeButton: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const low = isLowDrive(drive);
+  const warn = low || vm.critical;
+  return (
+    <div
+      role="status"
+      data-testid="vm-paused"
+      className={`mx-3 mb-3 flex flex-col gap-1 rounded-md border px-3 py-2 text-xs md:ml-12 ${warn ? "border-amber-500/60 bg-amber-500/10" : "border-border bg-muted/40"}`}
+    >
+      <span className="font-medium">
+        {vm.critical ? t("vms.pausedCritical") : t("vms.pausedPlain")}
+      </span>
+      {vm.status && !NORMAL_STATUS.test(vm.status) && (
+        <span className="text-muted-foreground">
+          {t("vms.status", { status: vm.status })}
+        </span>
+      )}
+      {drive && (
+        <span data-testid="vm-paused-drive">
+          {t("vms.driveFree", {
+            name: drive.name,
+            free: drive.freeGB,
+            size: drive.sizeGB,
+          })}
+        </span>
+      )}
+      {low && (
+        <span
+          className="font-medium text-destructive"
+          data-testid="vm-low-drive"
+        >
+          {t("vms.lowDrive")}
+        </span>
+      )}
+      {canOperate && !canResume && (
+        <span className="text-muted-foreground" data-testid="vm-no-resume">
+          {t("vms.noResume")}
+        </span>
+      )}
+      {resumeButton && <div className="mt-2 grid">{resumeButton}</div>}
+    </div>
+  );
+}
+
+/** What `show` says about the VM, and the last action HAW recorded on it. */
+function VmDetails({
+  termixHostId,
+  vm,
+  detail,
+  error,
+}: {
+  termixHostId: number;
+  vm: VmView;
+  detail: VmDetail | null;
+  error: string | null;
+}) {
+  const { t } = useTranslation();
+  const api = usePluginApi();
+  const me = useCurrentUser();
+  const [last, setLast] = useState<ActionView | null | undefined>(undefined);
+
+  // The last action: read again when the state changes (a new action).
+  useEffect(() => {
+    let current = true;
     api
       .get<ActionView[]>("/actions", {
         params: { hostId: termixHostId, vmName: vm.name, limit: 1 },
@@ -212,7 +339,7 @@ function VmDetails({
     return () => {
       current = false;
     };
-  }, [api, vmHostId, termixHostId, vm.name, vm.state]);
+  }, [api, termixHostId, vm.name, vm.state]);
 
   if (error) return <p className="text-xs text-destructive">{error}</p>;
   if (!detail)
@@ -252,6 +379,22 @@ function VmDetails({
         {detail.disks.map((disk, index) => (
           <DiskLine key={index} disk={disk} />
         ))}
+        {detail.drive && (
+          <span
+            className={
+              isLowDrive(detail.drive)
+                ? "font-medium text-destructive"
+                : "text-muted-foreground"
+            }
+            data-testid="vm-drive"
+          >
+            {t("vms.driveFree", {
+              name: detail.drive.name,
+              free: detail.drive.freeGB,
+              size: detail.drive.sizeGB,
+            })}
+          </span>
+        )}
       </Section>
       <Section title={t("vms.network")}>
         {detail.networks.map((net, index) => (

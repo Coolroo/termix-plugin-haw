@@ -66,7 +66,7 @@ export const actions = defineTable(
     at: timestamp().notNull(),
     userId: varchar(255).notNull(),
     hostId: integer().notNull(),
-    // add-host, remove-host, start, stop, restart, link-console, ...
+    // add-host, remove-host, start, stop, restart, resume, link-console, ...
     action: varchar(32).notNull(),
     vmName: varchar(255),
     force: boolean().notNull(),
