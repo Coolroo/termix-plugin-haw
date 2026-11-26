@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.6
+
+### Added
+
+- **Resume a paused VM.** vmctl has a new verb, `resume`, for a VM that is paused. It is a power verb like `start`, for operators, and it works on a protected VM too. HAW has the route `POST /hosts/:id/vms/:name/resume`, recorded and audited as `resume`. A VM that is not paused gets `wrong-state`, and `start` on a paused VM now says to resume it instead.
+- **VM status and drive space.** `list` and `show` give each VM's `status` (Hyper-V's own words for its health) and `critical` (Hyper-V marks the VM critical, as in Paused-Critical). `show` gives `drive`: the host drive that holds the VM's first disk file, with its size and free space in GB, or `null` for a share, a VM with no disk, or a drive that Windows does not measure.
+- **Resume on the card.** A paused VM gets **Resume**, never **Start**, when the host's vmctl lists `resume`. Under its row, HAW shows Paused-Critical in words, Hyper-V's status and the free space of the VM's drive. Under 10 GB free, it adds "Hyper-V pauses a VM when its disk drive is almost full: free space first, then Resume." The details of every VM show the drive line.
+
+### Changed
+
+- **The VM service `haw.vms` is version 1.1.0.** It adds `resume(caller, host, name)`, with the same role rules as `start`, and the new `status`, `critical` and `drive` fields. The agent limit refuses `resume`. See [the VM service](docs/service.md).
+- **The Hyper-V back end (`vmctl-worker.ps1`) is version 1.1.0.** `vmctl.ps1` and `install.ps1` did not change. HAW does not update a host by itself: run the host's setup of this version again (see [Update vmctl](docs/hyper-v.md#update-vmctl)). Until then, HAW works as before, without Resume, and says what to do for a paused VM.
+- **Refresh updates the host's info.** After a host's vmctl is updated, its new verbs show when you press **Refresh**, without a reload of the page.
+
 ## 1.0.5
 
 ### Changed
