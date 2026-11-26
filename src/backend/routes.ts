@@ -12,9 +12,10 @@ import { body, idParam, refuseApiKey, requireSignedIn, wrap } from "./http.js";
 import { InputError } from "./errors.js";
 import type { Store, VmHostRow } from "./store.js";
 import type { Vmctl } from "./vmctl.js";
-import { checked, failure, refuse, VM_NAME } from "./calls.js";
+import { checked, explainVerb, failure, refuse, VM_NAME } from "./calls.js";
 import {
   POWER_VERBS,
+  takesForce,
   toConsole,
   toInfo,
   toVmDetail,
@@ -355,9 +356,14 @@ export function registerRoutes(
       if (force !== undefined && typeof force !== "boolean") {
         throw new InputError("force must be true or false", 400);
       }
-      const args =
-        verb === "start" ? { name } : { name, force: force === true };
-      const result = await vmctl(row.hostId, row.interface, verb, args);
+      // Start and resume take no force; who may start may resume.
+      const args = takesForce(verb)
+        ? { name, force: force === true }
+        : { name };
+      const result = explainVerb(
+        verb,
+        await vmctl(row.hostId, row.interface, verb, args),
+      );
       const message = result.ok ? null : result.message;
       await store.record({
         userId: actor(),

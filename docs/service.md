@@ -1,6 +1,7 @@
 # The VM service, for other plugins
 
-HAW 1.0.3 provides the service `haw.vms`, version 1.0.0. Another plugin uses
+HAW 1.0.3 provides the service `haw.vms`, version 1.0.0; HAW 1.0.6 provides
+version 1.1.0, which adds `resume`. Another plugin uses
 it to do VM actions for the person who uses that plugin: Runbooks runs a VM
 step when a person presses its button, for example. HAW checks that person's
 HAW role, runs `vmctl` exactly as its own tab does, and records the action
@@ -101,6 +102,7 @@ host. `name` is a VM's name, without wildcards.
 | `list(caller, host)`                      | viewer   | `[Vm & { consoleHostId }]`                                     |
 | `show(caller, host, name)`                | viewer   | the VM's details (protocol `show` result's `vm`)               |
 | `start(caller, host, name)`               | operator | the VM after the action (`Vm`)                                 |
+| `resume(caller, host, name)` (1.1.0)      | operator | the VM after a paused VM runs on (`Vm`)                        |
 | `stop(caller, host, name, { force? })`    | operator | the VM; `force: true` turns it off instead of a shutdown       |
 | `restart(caller, host, name, { force? })` | operator | the VM; `force: true` is a hard reset                          |
 | `consoleInfo(caller, host, name)`         | operator | `{ console: { kind, host, port, vmId }, consoleHost }`         |
@@ -108,6 +110,15 @@ host. `name` is a VM's name, without wildcards.
 - `hosts` lists only the VM hosts whose Termix host the person can see.
   `verbs` are the verbs `vmctl info` listed when HAW last read the host; offer
   only those.
+- `resume` is like `start`: who may start may resume, and the protect list
+  allows it. Offer it for a `paused` VM, and only when the service has the
+  method (`typeof vms.resume === "function"`, HAW 1.0.6 or later) and the
+  host's `verbs` list `"resume"` (vmctl 1.1.0 or later). A host with an older
+  vmctl answers `unknown-verb`, with a message that says to update vmctl.
+- A `paused` VM with `critical: true` was paused by the hypervisor itself,
+  most often because the drive with its disk is almost full. `show` gives
+  that drive's free space as `drive` (or null); say it to the person before
+  a resume, since the VM pauses again while the drive stays full.
 - `Vm`, the VM details and the console are the shapes in the
   [protocol](protocol.md#verbs). `consoleHost` is the Termix host linked to
   open the console in the Remote Desktop plugin, `{ id, name }`, or null.
@@ -148,7 +159,7 @@ line in Termix's audit log, `haw.service.<method>`.
 Every power action and every `consoleInfo` goes into HAW's record, done or
 refused by the host, with the person, the plugin and its `ref`. The tab's
 **Record** and a VM's last action show "via `<plugin>`: `<ref>`". Termix's
-audit log gets `haw.start`, `haw.stop`, `haw.restart` or `haw.console`, as the
+audit log gets `haw.start`, `haw.resume`, `haw.stop`, `haw.restart` or `haw.console`, as the
 person, with "via `<plugin>`: `<ref>`" in its details. Core also writes its
 own audit line for every service call, with the calling plugin.
 
@@ -215,6 +226,10 @@ interface Vm {
   allowed: boolean;
   /** On the host's protect list: never stopped from HAW. */
   protected: boolean;
+  /** 1.1.0: the hypervisor's words for the VM's health; "" before. */
+  status: string;
+  /** 1.1.0: the hypervisor marks it critical (Hyper-V Paused-Critical). */
+  critical: boolean;
 }
 
 interface VmDetail extends Vm {
@@ -223,6 +238,8 @@ interface VmDetail extends Vm {
   networks: Array<{ switch: string; mac: string; addresses: string[] }>;
   checkpoints: number;
   notes: string;
+  /** 1.1.0: the drive with the first disk file, or null. */
+  drive: { name: string; sizeGB: number; freeGB: number } | null;
 }
 
 interface Caller {
@@ -256,6 +273,8 @@ interface VmService {
   ): Promise<Array<Vm & { consoleHostId: number | null }>>;
   show(caller: Caller, host: number, name: string): Promise<VmDetail>;
   start(caller: Caller, host: number, name: string): Promise<Vm>;
+  /** 1.1.0 (HAW 1.0.6). */
+  resume?(caller: Caller, host: number, name: string): Promise<Vm>;
   stop(
     caller: Caller,
     host: number,

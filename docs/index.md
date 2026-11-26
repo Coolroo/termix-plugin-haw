@@ -27,11 +27,11 @@ memory.
 An admin gives each person one of three permissions, under Roles in Termix's
 admin settings. Each includes the ones below it.
 
-| Permission      | Role     | Can                                                              |
-| --------------- | -------- | ---------------------------------------------------------------- |
-| Manage VM hosts | owner    | Add and remove VM hosts, link consoles                           |
-| Power VMs       | operator | Start, shut down, turn off, restart and reset VMs; open consoles |
-| See VMs         | viewer   | See VM hosts, their VMs and the record                           |
+| Permission      | Role     | Can                                                                      |
+| --------------- | -------- | ------------------------------------------------------------------------ |
+| Manage VM hosts | owner    | Add and remove VM hosts, link consoles                                   |
+| Power VMs       | operator | Start, resume, shut down, turn off, restart and reset VMs; open consoles |
+| See VMs         | viewer   | See VM hosts, their VMs and the record                                   |
 
 By default only admins hold them. A person also needs access to the Termix
 host itself: HAW connects as the person who clicks, through Termix's own SSH
@@ -62,11 +62,30 @@ outside the host's name pattern: HAW only shows it.
 
 Power buttons ask first:
 
-- **Start**
+- **Start**: an off or saved VM
+- **Resume**: a paused VM runs on from where it stopped (see below)
 - **Shut down**: the guest shuts down (it needs the guest's integration services)
 - **Turn off**: the VM stops at once, like pulling the plug
 - **Restart**: shut down, then start
 - **Reset**: a hard reset
+
+### A paused VM
+
+A paused VM gets **Resume**, never **Start** (Hyper-V can't start a paused VM).
+Under its row HAW says why it is paused:
+
+- **Paused-Critical**: Hyper-V paused the VM by itself, because it can't write
+  to its disk. This happens most often when the drive that holds the VM's disk
+  file is almost full.
+- The free space on that drive, when the host gives it, with a warning when
+  it is under 10 GB: free space on that drive first, then press **Resume**, or
+  Hyper-V pauses the VM again at once.
+- When the host's vmctl is older than HAW 1.0.6, HAW shows no Resume button
+  and says to update vmctl on the host ([Hyper-V](hyper-v.md#update-vmctl)),
+  then to press **Refresh** on the host.
+
+Like Start, Resume is allowed on a protected VM. A paused VM still holds its
+CPUs and memory, so a resume checks no ceiling.
 
 The host checks its own limits again on every action, so a button HAW shows
 can still be refused, for example when a start would go past the host's

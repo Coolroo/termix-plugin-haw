@@ -19,6 +19,7 @@ import {
   isStopped,
   matchesFilter,
   refusal,
+  type HostInfo,
   type VmFilter,
   type VmHostView,
   type VmListAnswer,
@@ -31,12 +32,13 @@ import { canManage, canOperate, type Role } from "../shared/roles";
 
 /** A power button: the verb it sends and whether it forces. */
 export type PowerAction =
-  "start" | "shutdown" | "turnoff" | "restart" | "reset";
+  "start" | "resume" | "shutdown" | "turnoff" | "restart" | "reset";
 const POWER: Record<
   PowerAction,
   { verb: string; force: boolean; destructive: boolean }
 > = {
   start: { verb: "start", force: false, destructive: false },
+  resume: { verb: "resume", force: false, destructive: false },
   shutdown: { verb: "stop", force: false, destructive: true },
   turnoff: { verb: "stop", force: true, destructive: true },
   restart: { verb: "restart", force: false, destructive: true },
@@ -50,12 +52,18 @@ const POWER: Record<
  */
 export const POLL_MS = 2000;
 
-/** The buttons a VM in this state gets. */
-export function powerActions(vm: VmView): PowerAction[] {
+/**
+ * The buttons a VM in this state gets. `verbs` are the verbs the host's
+ * vmctl listed: a paused VM gets Resume only from a host that offers it
+ * (Start can't work on a paused VM).
+ */
+export function powerActions(
+  vm: VmView,
+  verbs: readonly string[],
+): PowerAction[] {
   if (!vm.allowed) return [];
-  const startable =
-    vm.state === "off" || vm.state === "saved" || vm.state === "paused";
-  if (startable) return ["start"];
+  if (vm.state === "off" || vm.state === "saved") return ["start"];
+  if (vm.state === "paused") return verbs.includes("resume") ? ["resume"] : [];
   if (vm.state !== "running") return [];
   return vm.protected ? [] : ["shutdown", "turnoff", "restart", "reset"];
 }
@@ -90,7 +98,11 @@ export function HostCard({
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [showLimits, setShowLimits] = useState(false);
   const [question, ask] = useConfirm();
-  const info = host.info;
+  // What vmctl info said last; Refresh reads it again (after a host's vmctl
+  // is updated, its new verbs show at once).
+  const [info, setInfo] = useState<HostInfo | null>(host.info);
+  useEffect(() => setInfo(host.info), [host.info]);
+  const verbs = info?.verbs ?? [];
 
   const load = useCallback(async () => {
     try {
@@ -138,7 +150,7 @@ export function HostCard({
       const done = (
         await api.post<{ vm: VmView }>(
           `/hosts/${host.id}/vms/${encodeURIComponent(vm.name)}/${verb}`,
-          verb === "start" ? {} : { force },
+          verb === "start" || verb === "resume" ? {} : { force },
         )
       ).data.vm;
       toast.success(
@@ -174,7 +186,10 @@ export function HostCard({
 
   async function refresh() {
     try {
-      await api.post(`/hosts/${host.id}/refresh`);
+      setInfo(
+        (await api.post<{ info: HostInfo }>(`/hosts/${host.id}/refresh`)).data
+          .info,
+      );
     } catch (failure) {
       toast.error(refusal(failure).error);
     }
@@ -303,7 +318,8 @@ export function HostCard({
                 vmHostId={host.id}
                 termixHostId={host.hostId}
                 vm={vm}
-                actions={operate ? powerActions(vm) : []}
+                actions={operate ? powerActions(vm, verbs) : []}
+                canResume={verbs.includes("resume")}
                 canOperate={operate}
                 mobile={mobile}
                 open={open.has(key)}

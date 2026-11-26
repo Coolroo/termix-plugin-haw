@@ -1,5 +1,5 @@
 /**
- * The service haw.vms 1.0.0, for other plugins (docs/service.md): VM actions
+ * The service haw.vms 1.1.0, for other plugins (docs/service.md): VM actions
  * for a person, the way the tab does them.
  *
  * Core checks the "haw.view" permission for the acting user before every
@@ -20,11 +20,12 @@ import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
 import { InputError } from "./errors.js";
 import type { Store, VmHostRow } from "./store.js";
 import type { Vmctl } from "./vmctl.js";
-import { checked, refuse, VM_NAME } from "./calls.js";
+import { checked, explainVerb, refuse, VM_NAME } from "./calls.js";
 import { CallerError, type Callers } from "./callers.js";
 import { currentRole } from "./role.js";
 import {
   ProtocolError,
+  takesForce,
   toConsole,
   toInfo,
   toVmDetail,
@@ -71,6 +72,8 @@ export interface VmService {
   list(caller: Caller, host: number): Promise<VmView[]>;
   show(caller: Caller, host: number, name: string): Promise<VmDetail>;
   start(caller: Caller, host: number, name: string): Promise<Vm>;
+  /** 1.1.0: a paused VM runs on. The host's verbs list "resume" when it can. */
+  resume(caller: Caller, host: number, name: string): Promise<Vm>;
   stop(
     caller: Caller,
     host: number,
@@ -317,15 +320,17 @@ export function createVmService(
           400,
         );
       }
-      const args =
-        verb === "start" ? { name: vm } : { name: vm, force: force === true };
+      const args = takesForce(verb)
+        ? { name: vm, force: force === true }
+        : { name: vm };
       return act(
         who,
         row,
         verb,
         vm,
         force === true,
-        () => vmctl(row.hostId, row.interface, verb, args),
+        async () =>
+          explainVerb(verb, await vmctl(row.hostId, row.interface, verb, args)),
         (result) => toVmList({ vms: [(result as { vm?: unknown })?.vm] })[0],
       );
     });
@@ -403,6 +408,7 @@ export function createVmService(
       }),
 
     start: (caller, host, name) => power("start", caller, host, name),
+    resume: (caller, host, name) => power("resume", caller, host, name),
     stop: (caller, host, name, options) =>
       power("stop", caller, host, name, options),
     restart: (caller, host, name, options) =>

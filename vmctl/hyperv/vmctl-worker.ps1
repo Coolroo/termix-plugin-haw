@@ -22,12 +22,14 @@ protected, ceilings, console). Only administrators can change that file; no
 request can name another file. When it is missing or wrong, "info" still
 answers (with configProblem) and every other verb answers "config".
 
-Verbs: info, list, show, start, stop, restart, console-info. The protocol's
-create, delete, snapshot, restore and users answer "not-in-this-version".
+Verbs: info, list, show, start, stop, restart, resume, console-info. The
+protocol's create, delete, snapshot, restore and users answer
+"not-in-this-version".
 
 A VM name from a request is never run as code. It is compared with the names
 that Get-VM gives, and only the VM objects that Get-VM gave go to Start-VM,
-Stop-VM and Restart-VM. Names with wildcard characters are refused first.
+Stop-VM, Restart-VM and Resume-VM. Names with wildcard characters are refused
+first.
 
 It runs on Windows PowerShell 5.1 (the task runs powershell.exe) and on
 PowerShell 7 (the tests). The tests give paths to Invoke-WorkerJob directly.
@@ -44,9 +46,9 @@ $VerbosePreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
 
 # ------------------------------------------------------------------ fixed values
-$script:VmctlVersion = '1.0.0'
+$script:VmctlVersion = '1.1.0'
 $script:ProtocolVersions = @(1)
-$script:Verbs = @('info', 'list', 'show', 'start', 'stop', 'restart', 'console-info')
+$script:Verbs = @('info', 'list', 'show', 'start', 'stop', 'restart', 'resume', 'console-info')
 $script:LaterVerbs = @('create', 'delete', 'snapshot', 'restore', 'users')
 $script:RequestFields = @('haw', 'v', 'id', 'verb', 'args')
 # The arguments of each verb: name -> type ('name' or 'bool') and whether it must be there.
@@ -57,6 +59,7 @@ $script:VerbArgs = @{
     'start'        = @{ 'name' = @{ Type = 'name'; Required = $true } }
     'stop'         = @{ 'name' = @{ Type = 'name'; Required = $true }; 'force' = @{ Type = 'bool'; Required = $false } }
     'restart'      = @{ 'name' = @{ Type = 'name'; Required = $true }; 'force' = @{ Type = 'bool'; Required = $false } }
+    'resume'       = @{ 'name' = @{ Type = 'name'; Required = $true } }
     'console-info' = @{ 'name' = @{ Type = 'name'; Required = $true } }
 }
 $script:ConfigFields = @('namePattern', 'protected', 'ceilings', 'console')
@@ -450,9 +453,13 @@ function Assert-NotProtected {
 }
 
 # ------------------------------------------------------------------ Hyper-V
+# Hyper-V's state without the "Critical" it adds when the VM can't use its
+# storage: PausedCritical is paused, RunningCritical is running.
 function ConvertTo-VmState {
     param($State)
-    switch ([string]$State) {
+    $s = [string]$State
+    if ($s.Length -gt 8 -and $s.EndsWith('Critical')) { $s = $s.Substring(0, $s.Length - 8) }
+    switch ($s) {
         'Running' { return 'running' }
         'Off' { return 'off' }
         'Paused' { return 'paused' }
@@ -461,6 +468,24 @@ function ConvertTo-VmState {
         'Stopping' { return 'stopping' }
         default { return 'other' }
     }
+}
+
+# Hyper-V marks a VM critical (Paused-Critical, Running-Critical) when the VM
+# can't use its storage, most often when the drive with its disk files is
+# almost full. Hyper-V then pauses the VM by itself.
+function Test-VmCritical {
+    param($Vm)
+    if (([string]$Vm.State).EndsWith('Critical')) { return $true }
+    return ([string]$Vm.Status -match 'critical')
+}
+
+# Hyper-V's own words for the VM's health ("Operating normally"), one line.
+function Get-VmStatusText {
+    param($Vm)
+    if (-not $Vm.Status) { return '' }
+    $t = ([string]$Vm.Status -replace '[\r\n\t]+', ' ').Trim()
+    if ($t.Length -gt 200) { $t = $t.Substring(0, 200) }
+    return $t
 }
 
 function Get-AllVms {
@@ -543,13 +568,16 @@ function ConvertTo-VmInfo {
         addresses     = @(Get-AdapterAddresses $Adapters)
         allowed       = [bool](Test-NameAllowed $name $Config)
         protected     = [bool](Test-NameProtected $name $Config.Protected)
+        status        = (Get-VmStatusText $Vm)
+        critical      = [bool](Test-VmCritical $Vm)
     }
 }
 
 function Get-VmDisks {
-    param($Vm)
+    param($Vm, [object[]]$Drives)
     $out = @()
-    foreach ($d in @(Get-VMHardDiskDrive -VM $Vm -ErrorAction Stop)) {
+    foreach ($d in @($Drives)) {
+        if ($null -eq $d) { continue }
         $size = $null
         $used = $null
         if ($d.Path) {
@@ -562,6 +590,32 @@ function Get-VmDisks {
         $out += , ([ordered]@{ sizeGB = $size; usedGB = $used })
     }
     return $out
+}
+
+# The drive that holds the VM's first disk file, with its size and free space:
+# Hyper-V pauses a VM when that drive is almost full. $null when the VM has no
+# disk file, the file is not on a drive letter (a share), or Windows does not
+# say.
+function Get-VmDrive {
+    param($Vm, [object[]]$Drives)
+    $path = $null
+    foreach ($d in @($Drives)) {
+        if ($null -ne $d -and $d.Path) { $path = [string]$d.Path; break }
+    }
+    if (-not $path -or $path -notmatch '^([A-Za-z]):[\\/]') { return $null }
+    $letter = $Matches[1].ToUpperInvariant()
+    try {
+        $drive = @(Get-PSDrive -Name $letter -PSProvider FileSystem -ErrorAction Stop | Where-Object { [string]$_.Name -eq $letter }) | Select-Object -First 1
+        if ($null -eq $drive -or $null -eq $drive.Free -or $null -eq $drive.Used) { return $null }
+        return [ordered]@{
+            name   = ($letter + ':')
+            sizeGB = (ConvertTo-GB ([double]$drive.Used + [double]$drive.Free))
+            freeGB = (ConvertTo-GB $drive.Free)
+        }
+    } catch {
+        Write-VmctlLog ('no free space for the drive of ' + $Vm.Name + ': ' + (Format-VmctlMessage $_.Exception.Message))
+        return $null
+    }
 }
 
 function Get-VmNetworks {
@@ -694,8 +748,10 @@ function Invoke-ShowVerb {
     $vm = Find-Vm $name
     $adapters = @(Get-VmAdapters $vm)
     $info = ConvertTo-VmInfo $vm $Config $adapters
+    $drives = @(Get-VMHardDiskDrive -VM $vm -ErrorAction Stop)
     $info['generation'] = [int]$vm.Generation
-    $info['disks'] = @(Get-VmDisks $vm)
+    $info['disks'] = @(Get-VmDisks $vm $drives)
+    $info['drive'] = (Get-VmDrive $vm $drives)
     $info['networks'] = @(Get-VmNetworks $adapters)
     $info['checkpoints'] = [int]@(Get-VMSnapshot -VM $vm -ErrorAction Stop).Count
     $notes = ''
@@ -710,6 +766,7 @@ function Invoke-StartVerb {
     Assert-NameAllowed $name $Config
     $vm = Find-Vm $name
     $state = ConvertTo-VmState $vm.State
+    if ($state -eq 'paused') { Stop-Vmctl 'wrong-state' ($name + ' is paused; resume it instead (start needs it off or saved)') }
     if ($state -ne 'off' -and $state -ne 'saved') { Stop-Vmctl 'wrong-state' ($name + ' is ' + $state + '; start needs it off or saved') }
     Assert-Ceiling $vm $Config
     $null = Start-VM -VM $vm -Confirm:$false -ErrorAction Stop
@@ -756,6 +813,36 @@ function Invoke-RestartVerb {
         $null = Start-VM -VM $off -Confirm:$false -ErrorAction Stop
     }
     return [ordered]@{ vm = (ConvertTo-VmInfo (Find-Vm $name) $Config) }
+}
+
+# Resume: a paused VM runs on from where it stopped. Like start, the protect
+# list allows it. A paused VM holds its CPUs and memory already, so the
+# ceilings do not change. When Hyper-V paused the VM because its drive is full,
+# it pauses it again at once: the reply then says so, with the free space.
+function Invoke-ResumeVerb {
+    param([hashtable]$Arguments, $Config)
+    $name = $Arguments['name']
+    Assert-NameAllowed $name $Config
+    $vm = Find-Vm $name
+    $state = ConvertTo-VmState $vm.State
+    if ($state -ne 'paused') {
+        $hint = ''
+        if ($state -eq 'off' -or $state -eq 'saved') { $hint = ' (start it instead)' }
+        Stop-Vmctl 'wrong-state' ($name + ' is ' + $state + '; resume needs it paused' + $hint)
+    }
+    $null = Resume-VM -VM $vm -Confirm:$false -ErrorAction Stop
+    $after = Find-Vm $name
+    if ((ConvertTo-VmState $after.State) -eq 'paused') {
+        $why = $name + ' is still paused after Resume-VM'
+        if (Test-VmCritical $after) {
+            $why = $name + ' is paused again (critical): Hyper-V pauses a VM when the drive with its disk files is almost full'
+            $drive = Get-VmDrive $after @(Get-VMHardDiskDrive -VM $after -ErrorAction SilentlyContinue)
+            if ($null -ne $drive) { $why = $why + '; ' + $drive['name'] + ' has ' + $drive['freeGB'] + ' GB free' }
+            $why = $why + '. Free space first, then resume it.'
+        }
+        Stop-Vmctl 'backend' $why
+    }
+    return [ordered]@{ vm = (ConvertTo-VmInfo $after $Config) }
 }
 
 function Invoke-ConsoleInfoVerb {
@@ -806,6 +893,7 @@ function Invoke-VmctlRequest {
             'start' { $result = Invoke-StartVerb $r.Arguments $config }
             'stop' { $result = Invoke-StopVerb $r.Arguments $config }
             'restart' { $result = Invoke-RestartVerb $r.Arguments $config }
+            'resume' { $result = Invoke-ResumeVerb $r.Arguments $config }
             'console-info' { $result = Invoke-ConsoleInfoVerb $r.Arguments $config }
         }
         Write-VmctlLog ($verbName + ': ok')

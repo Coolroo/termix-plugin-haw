@@ -201,6 +201,9 @@ describe("roles", () => {
       vms.start(runbooks.caller(), 1, "test-vm1"),
     ).rejects.toMatchObject({ code: "role", status: 403 });
     await expect(
+      vms.resume(runbooks.caller(), 1, "web-1"),
+    ).rejects.toMatchObject({ code: "role", status: 403 });
+    await expect(
       vms.consoleInfo(runbooks.caller(), 1, "web-1"),
     ).rejects.toMatchObject({ code: "role" });
   });
@@ -253,6 +256,55 @@ describe("the verbs", () => {
     ]);
     // The host and login are the tab's: the fixed command, as the person.
     expect(server.execCalls.at(-1)?.command).toBe(server.execCalls[0].command);
+  });
+
+  it("resumes a paused VM, records it as resume, and lists resume in the host's verbs", async () => {
+    const fake = fakeHost({ protected: ["build-*"] });
+    Object.assign(fake.state.vms[0], { state: "paused", critical: true });
+    const { server, runbooks, vms } = await bound({ fakes: { 1: fake } });
+    const caller = runbooks.caller({ ref: "runbook 12 step 4" });
+    expect((await vms.hosts(caller))[0].verbs).toContain("resume");
+    await expect(vms.start(caller, 1, "build-1")).rejects.toMatchObject({
+      code: "wrong-state",
+      status: 409,
+    });
+    // build-1 is protected: like start, resume is allowed.
+    expect(await vms.resume(caller, 1, "build-1")).toMatchObject({
+      name: "build-1",
+      state: "running",
+      critical: false,
+    });
+    const sent = JSON.parse(String(server.execCalls.at(-1)?.options?.stdin));
+    expect([sent.verb, sent.args]).toEqual(["resume", { name: "build-1" }]);
+    await expect(vms.resume(caller, 1, "build-1")).rejects.toMatchObject({
+      code: "wrong-state",
+    });
+    const record = (await server.call("GET", "/actions")).body;
+    expect(record[1]).toMatchObject({
+      action: "resume",
+      ok: true,
+      via: "runbooks",
+      ref: "runbook 12 step 4",
+    });
+    expect(
+      server.mock.audits.filter((line) => line.action === "haw.resume"),
+    ).toHaveLength(2);
+  });
+
+  it("explains a resume on a host whose vmctl is older", async () => {
+    const fake = fakeHost();
+    fake.state.verbs = ["info", "list", "show", "start", "stop", "restart"];
+    fake.state.vms[0].state = "paused";
+    const { runbooks, vms } = await bound({ fakes: { 1: fake } });
+    expect((await vms.hosts(runbooks.caller()))[0].verbs).not.toContain(
+      "resume",
+    );
+    await expect(
+      vms.resume(runbooks.caller(), 1, "build-1"),
+    ).rejects.toMatchObject({
+      code: "unknown-verb",
+      message: expect.stringMatching(/install\.ps1/),
+    });
   });
 
   it("gives a console with its linked host", async () => {
@@ -320,6 +372,7 @@ describe("agent tokens (H3)", () => {
       () => vms.show(agent, 1, "web-1"),
       () => vms.info(agent, 1),
       () => vms.start(agent, 1, "test-vm1"),
+      () => vms.resume(agent, 1, "test-vm1"),
       () => vms.stop(agent, 1, "web-1"),
       () => vms.consoleInfo(agent, 1, "web-1"),
     ]) {

@@ -15,6 +15,7 @@ export const VERBS = [
   "start",
   "stop",
   "restart",
+  "resume",
   "console-info",
   "create",
   "delete",
@@ -26,8 +27,21 @@ export type Verb = (typeof VERBS)[number];
 
 /** What HAW 1.0 asks of a host. The rest answer "not in this version". */
 export const READ_VERBS = ["info", "list", "show", "console-info"] as const;
-export const POWER_VERBS = ["start", "stop", "restart"] as const;
+export const POWER_VERBS = ["start", "stop", "restart", "resume"] as const;
 export type PowerVerb = (typeof POWER_VERBS)[number];
+
+/** The power verbs that take `force`; start and resume take only a name. */
+export const takesForce = (verb: PowerVerb) =>
+  verb === "stop" || verb === "restart";
+
+/**
+ * Verbs that came after vmctl 1.0.0 (HAW 1.0.6: resume). A host whose vmctl
+ * is older does not list them in `info`, and answers "unknown-verb".
+ */
+export const LATER_VERBS: readonly Verb[] = ["resume"];
+
+/** Below this much free space on a VM's drive, HAW warns (Hyper-V pauses). */
+export const LOW_DRIVE_GB = 10;
 
 export const ERROR_CODES = [
   "bad-request",
@@ -96,6 +110,20 @@ export interface Vm {
   addresses: string[];
   allowed: boolean;
   protected: boolean;
+  /** The hypervisor's own words for the VM's health; "" when it gives none. */
+  status: string;
+  /**
+   * The hypervisor marks the VM critical: it can't use its storage (Hyper-V's
+   * Paused-Critical, most often a drive that is almost full).
+   */
+  critical: boolean;
+}
+
+/** A host drive: its name ("D:") and its size and free space. */
+export interface Drive {
+  name: string;
+  sizeGB: number;
+  freeGB: number;
 }
 
 export interface VmDetail extends Vm {
@@ -104,6 +132,8 @@ export interface VmDetail extends Vm {
   networks: Array<{ switch: string; mac: string; addresses: string[] }>;
   checkpoints: number;
   notes: string;
+  /** The drive with the VM's first disk file, when the back end says. */
+  drive: Drive | null;
 }
 
 export interface HostLimits {
@@ -273,7 +303,19 @@ export function toVm(value: unknown): Vm {
     addresses: strings(vm.addresses),
     allowed: vm.allowed === true,
     protected: vm.protected === true,
+    status: str(vm.status),
+    critical: vm.critical === true,
   };
+}
+
+function toDrive(value: unknown): Drive | null {
+  if (!isObject(value) || typeof value.name !== "string" || !value.name) {
+    return null;
+  }
+  const sizeGB = numOrNull(value.sizeGB);
+  const freeGB = numOrNull(value.freeGB);
+  if (sizeGB === null || freeGB === null) return null;
+  return { name: clip(value.name, 64), sizeGB, freeGB };
 }
 
 export function toVmDetail(value: unknown): VmDetail {
@@ -295,6 +337,7 @@ export function toVmDetail(value: unknown): VmDetail {
     }),
     checkpoints: num(vm.checkpoints),
     notes: str(vm.notes, 2000),
+    drive: toDrive(vm.drive),
   };
 }
 

@@ -22,7 +22,8 @@ Read the [docs](docs/index.md) to set it up and use it.
 
 - Add any Termix host as a VM host and choose its interface; HAW checks it with `vmctl info`, and shows the one-time setup when vmctl is not there yet
 - Every VM with its state, CPUs, memory, addresses and uptime
-- Start, shut down, turn off, restart and reset, each after a confirm
+- Start, resume, shut down, turn off, restart and reset, each after a confirm
+- A paused VM says why: Hyper-V's Paused-Critical, and the free space on the drive with its disk, with a warning when it is almost full
 - A protect list, a name pattern and ceilings kept on the host, checked by the host on every request
 - Open a VM's console in the Remote Desktop plugin (Hyper-V VMConnect)
 - Three roles: owner, operator and viewer

@@ -16,11 +16,26 @@ export interface FakeVm {
   mac: string;
   checkpoints: number;
   notes: string;
+  /** Hyper-V's status words; "Operating normally" when not set. */
+  status?: string;
+  /** Paused-Critical and the like. */
+  critical?: boolean;
+  drive?: FakeDrive;
+}
+
+export interface FakeDrive {
+  name: string;
+  sizeGB: number;
+  freeGB: number;
 }
 
 export interface FakeState {
   host: string;
   vms: FakeVm[];
+  /** The drive `show` gives for a VM without its own. */
+  drive?: FakeDrive;
+  /** Limits the verbs offered, as an older vmctl (no "resume"). */
+  verbs?: string[];
 }
 
 export function defaultState(): FakeState;
