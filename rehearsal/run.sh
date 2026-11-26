@@ -12,6 +12,8 @@ docker exec -w /tmp/haw-reh "$T" node setup.mjs
 
 # The host's admin gives test-vm1 4 CPUs, so the three VMs together pass the
 # 8 CPU ceiling in vmctl.json and a start can be refused with "ceiling".
+# build-1 starts Paused-Critical on a drive with 3.2 GB free, as Hyper-V
+# pauses a VM whose drive is almost full: the checks resume it first.
 docker exec -u vmctl "$F" node --input-type=module -e '
 import { existsSync, writeFileSync } from "node:fs";
 const { defaultState } = await import("/opt/haw/vmctl-fake.mjs");
@@ -19,6 +21,12 @@ const file = "/var/lib/haw/state.json";
 if (!existsSync(file)) {
   const s = defaultState();
   s.vms.find((v) => v.name === "test-vm1").cpus = 4;
+  Object.assign(s.vms.find((v) => v.name === "build-1"), {
+    state: "paused",
+    critical: true,
+    status: "Paused-Critical",
+    drive: { name: "D:", sizeGB: 930.7, freeGB: 3.2 },
+  });
   writeFileSync(file, JSON.stringify(s, null, 2));
 }'
 

@@ -75,6 +75,15 @@ host's administrator would. The checks then stop web-1, start test-vm1 (8 CPUs),
 and a start of web-1 is refused with `ceiling` (10 CPUs); later, with web-1
 running again, a start of test-vm1 is refused the same way.
 
+## The paused VM
+
+`run.sh` also leaves build-1 Paused-Critical, on a drive with 3.2 GB free, as
+Hyper-V pauses a VM whose drive is almost full. The checks read its status and
+drive, see a start refused with "resume it instead", resume it (it is
+protected, and resume is allowed like start), and see a second resume refused
+with `wrong-state`. The fake counts paused VMs against the ceilings, as
+vmctl-worker.ps1 does, so build-1 holds its 4 CPUs while paused.
+
 ## Proof that every call ran the forced command
 
 `run.sh` counts sshd's `Starting session: forced-command (config) 'node

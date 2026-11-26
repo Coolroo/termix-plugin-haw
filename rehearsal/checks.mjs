@@ -134,11 +134,12 @@ async function main() {
     interface: "hyper-v",
   });
   check(
-    "POST /hosts/check vmctl: ok, fake 1.0.0",
+    "POST /hosts/check vmctl: ok, fake 1.1.0 with resume",
     r.status === 200 &&
       r.body.ok === true &&
       r.body.info?.backend?.kind === "fake" &&
-      r.body.info.backend.version === "1.0.0",
+      r.body.info.backend.version === "1.1.0" &&
+      r.body.info.verbs?.includes("resume"),
     r.status,
     { ok: r.body.ok, backend: r.body.info?.backend, verbs: r.body.info?.verbs },
   );
@@ -171,10 +172,10 @@ async function main() {
     ? r.body.find((h) => h.id === vmHost)
     : null;
   check(
-    "GET /hosts: the host with info (fake 1.0.0, protected build-*)",
+    "GET /hosts: the host with info (fake 1.1.0, protected build-*)",
     r.status === 200 &&
       row?.info?.backend?.kind === "fake" &&
-      row.info.backend.version === "1.0.0" &&
+      row.info.backend.version === "1.1.0" &&
       JSON.stringify(row.info.limits?.protected) === '["build-*"]',
     r.status,
     {
@@ -228,6 +229,54 @@ async function main() {
   // three VMs together pass the 8 CPU ceiling.
   const power = (name, verb, body, auth = admin) =>
     api("POST", `/hosts/${vmHost}/vms/${name}/${verb}`, auth, body);
+
+  // A paused VM (BUG-023): run.sh left build-1 Paused-Critical on a drive
+  // with 3.2 GB free. Start can't work on it; resume can, also protected.
+  r = await api("GET", `/hosts/${vmHost}/vms`, admin);
+  const pausedVm = r.body.vms?.find((v) => v.name === "build-1");
+  check(
+    "GET /hosts/<id>/vms: build-1 paused, critical, Paused-Critical",
+    r.status === 200 &&
+      pausedVm?.state === "paused" &&
+      pausedVm.critical === true &&
+      pausedVm.status === "Paused-Critical",
+    r.status,
+    short(pausedVm, 300),
+  );
+  r = await api("GET", `/hosts/${vmHost}/vms/build-1`, admin);
+  check(
+    "GET /hosts/<id>/vms/build-1: drive D: 3.2 GB free",
+    r.status === 200 &&
+      r.body.vm?.drive?.name === "D:" &&
+      r.body.vm.drive.freeGB === 3.2,
+    r.status,
+    r.body.vm?.drive,
+  );
+  r = await power("build-1", "start", {});
+  check(
+    "POST start build-1 while paused: 409 wrong-state, resume it instead",
+    r.status === 409 &&
+      r.body.code === "wrong-state" &&
+      /resume it instead/.test(r.body.error ?? ""),
+    r.status,
+    r.body,
+  );
+  r = await power("build-1", "resume", {});
+  check(
+    "POST resume build-1 (protected): running, not critical",
+    r.status === 200 &&
+      r.body.vm?.state === "running" &&
+      r.body.vm.critical === false,
+    r.status,
+    short(r.body.vm, 200),
+  );
+  r = await power("build-1", "resume", {});
+  check(
+    "POST resume build-1 while running: 409 wrong-state",
+    r.status === 409 && r.body.code === "wrong-state",
+    r.status,
+    r.body,
+  );
   r = await power("web-1", "stop", { force: false });
   check(
     "POST stop web-1 {force:false}: off",
@@ -350,7 +399,14 @@ async function main() {
   // The record, in HAW and in Termix's audit log.
   r = await api("GET", `/actions?hostId=${H.vmctl.id}`, admin);
   const actions = Array.isArray(r.body) ? r.body : [];
-  const want = ["add-host", "start", "stop", "restart", "link-console"];
+  const want = [
+    "add-host",
+    "start",
+    "resume",
+    "stop",
+    "restart",
+    "link-console",
+  ];
   check(
     "GET /actions: every action with ok/code",
     r.status === 200 &&
@@ -381,10 +437,11 @@ async function main() {
   const haw = logs.filter((l) => /haw/.test(l.action));
   const has = (a) => haw.some((l) => l.action.endsWith(a));
   check(
-    "Termix audit log: haw.add-host, haw.start, haw.stop",
+    "Termix audit log: haw.add-host, haw.start, haw.resume, haw.stop",
     r.status === 200 &&
       has("haw.add-host") &&
       has("haw.start") &&
+      has("haw.resume") &&
       has("haw.stop"),
     r.status,
     [

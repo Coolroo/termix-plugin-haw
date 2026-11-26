@@ -10,12 +10,18 @@
 // Defaults: $HAW_FAKE_STATE and $HAW_FAKE_CONFIG, else state.json and
 // vmctl.json next to this file. A missing state file starts with three VMs.
 // Tests import handleLine() instead.
+//
+// A VM in the state may be "paused" with "critical": true and a "status"
+// (Hyper-V's Paused-Critical), and may have a "drive" ({ name, sizeGB,
+// freeGB }) that `show` gives. The state's "drive" is the default for every
+// VM. The state's "verbs", when there, limits the verbs this fake offers, as
+// an older vmctl would (an old host without "resume").
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 const PROTOCOL = 1;
 const VERBS = [
   "info",
@@ -24,6 +30,7 @@ const VERBS = [
   "start",
   "stop",
   "restart",
+  "resume",
   "console-info",
 ];
 const LATER = ["create", "delete", "snapshot", "restore", "users"];
@@ -34,6 +41,7 @@ const ARGS = {
   start: ["name"],
   stop: ["name", "force"],
   restart: ["name", "force"],
+  resume: ["name"],
   "console-info": ["name"],
 };
 const DEFAULT_PATTERN = "^[a-z][a-z0-9-]{0,62}$";
@@ -182,10 +190,12 @@ function vmView(config, vm) {
     addresses: vm.state === "running" ? vm.addresses : [],
     allowed: isAllowed(config, vm.name),
     protected: isProtected(config, vm.name),
+    status: vm.status ?? "Operating normally",
+    critical: vm.critical === true,
   };
 }
 
-function detail(config, vm) {
+function detail(config, vm, state) {
   return {
     ...vmView(config, vm),
     generation: vm.generation,
@@ -199,8 +209,15 @@ function detail(config, vm) {
     ],
     checkpoints: vm.checkpoints,
     notes: vm.notes,
+    drive: vm.drive ?? state.drive ?? { name: "/", sizeGB: 500, freeGB: 300 },
   };
 }
+
+/** The verbs this fake offers: all, or the state's "verbs" (an old vmctl). */
+const offered = (state) =>
+  Array.isArray(state.verbs)
+    ? VERBS.filter((verb) => state.verbs.includes(verb))
+    : VERBS;
 
 function findVm(state, name) {
   if (/[*?[\]]/.test(name))
@@ -222,8 +239,13 @@ function guard(config, vm, verb) {
   }
 }
 
+// States in which a VM holds CPUs and memory, as vmctl-worker.ps1 counts them.
+const LOAD_STATES = ["running", "paused", "starting", "stopping"];
+
 function checkCeilings(config, state, vm) {
-  const running = state.vms.filter((v) => v.state === "running" && v !== vm);
+  const running = state.vms.filter(
+    (v) => LOAD_STATES.includes(v.state) && v !== vm,
+  );
   const cpus = running.reduce((sum, v) => sum + v.cpus, 0) + vm.cpus;
   const memory = running.reduce((sum, v) => sum + v.memoryMB, 0) + vm.memoryMB;
   const { ceilings } = config;
@@ -254,7 +276,7 @@ function run(verb, args, state, config, problem) {
         disks: [{ name: "/", sizeGB: 500, freeGB: 300 }],
       },
       networks: [{ name: "LAN", kind: "external" }],
-      verbs: VERBS,
+      verbs: offered(state),
       limits: {
         namePattern: config.namePattern,
         protected: config.protected,
@@ -269,7 +291,7 @@ function run(verb, args, state, config, problem) {
     return { vms: vms.map((vm) => vmView(config, vm)) };
   }
   const vm = findVm(state, args.name);
-  if (verb === "show") return { vm: detail(config, vm) };
+  if (verb === "show") return { vm: detail(config, vm, state) };
   if (verb === "console-info") {
     // A console is control of the VM: only for VMs the pattern allows.
     if (!isAllowed(config, vm.name)) {
@@ -289,6 +311,11 @@ function run(verb, args, state, config, problem) {
   }
   guard(config, vm, verb);
   if (verb === "start") {
+    if (vm.state === "paused")
+      throw new Refused(
+        "wrong-state",
+        `${vm.name} is paused; resume it instead (start needs it off or saved)`,
+      );
     if (vm.state === "running")
       throw new Refused("wrong-state", `${vm.name} is running`);
     checkCeilings(config, state, vm);
@@ -300,6 +327,18 @@ function run(verb, args, state, config, problem) {
       throw new Refused("wrong-state", `${vm.name} is off`);
     vm.state = "off";
     vm.startedAt = null;
+  } else if (verb === "resume") {
+    // Like start, the protect list allows it; a paused VM holds its CPUs
+    // and memory already, so no ceiling changes.
+    if (vm.state !== "paused")
+      throw new Refused(
+        "wrong-state",
+        `${vm.name} is ${vm.state}; resume needs it paused`,
+      );
+    vm.state = "running";
+    vm.critical = false;
+    vm.status = "Operating normally";
+    vm.addresses = ["192.0.2." + (10 + vm.cpus)];
   } else if (verb === "restart") {
     if (vm.state !== "running")
       throw new Refused("wrong-state", `${vm.name} is not running`);
@@ -369,6 +408,8 @@ export function handleLine(line, { load, save }) {
     return fail(id, "bad-request", "force must be true or false");
   }
   const { state, configText } = load();
+  if (!offered(state).includes(verb))
+    return fail(id, "unknown-verb", `${verb} is not a vmctl verb`);
   const { config, problem } = readConfig(configText);
   try {
     const result = run(verb, args, state, config, problem);
