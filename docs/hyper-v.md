@@ -65,6 +65,30 @@ second run changes nothing. `-WhatIf` only says what it would change.
 | `-ReplaceConfig`                   |                          | Write `vmctl.json` again from the parameters                             |
 | `-Uninstall`                       |                          | Remove everything                                                        |
 
+## Update vmctl
+
+A new HAW version can bring new vmctl files: HAW 1.0.6 brings
+`vmctl-worker.ps1` 1.1.0, with the `resume` verb, the VM status and the free
+space of a VM's drive. HAW does not update a host by itself. Until the host
+has the new files, HAW works as before, without Resume.
+
+1. On the machine, in PowerShell as administrator, run the same lines as the
+   first setup, from **Add VM host**'s setup steps of the new HAW version
+   (they download the released files of that version and check each SHA-256).
+   Give the same `-PublicKey`: the line in
+   `C:\ProgramData\ssh\haw-vmctl_authorized_keys`. Leave out the limit
+   parameters: `install.ps1` keeps `vmctl.json` as it is unless you give
+   `-ReplaceConfig`.
+2. `install.ps1` changes only what differs. For HAW 1.0.6 it prints
+   `SET   installed vmctl-worker.ps1`, `CHANGED 1`, and its last check says
+   "Hyper-V back end 1.1.0". `vmctl.ps1` and `install.ps1` did not change.
+   A second run prints `CHANGED 0`.
+3. In HAW, press **Refresh** on the host. Its header shows `vmctl 1.1.0`, and
+   a paused VM gets **Resume**.
+
+Copying `vmctl-worker.ps1` by hand to `C:\ProgramData\haw` works too, but
+`install.ps1` checks the file's SHA-256 first and keeps its access list.
+
 ## Change the limits later
 
 Run `install.ps1` again with `-ReplaceConfig` and the new values, or edit
@@ -73,6 +97,15 @@ request. HAW can't change it: the vmctl account can only read it, and no verb
 writes it.
 
 ## Notes
+
+- **Paused-Critical.** Hyper-V pauses a VM by itself when it can't write to
+  the VM's disk, most often when the drive that holds the VHDX is almost full.
+  vmctl reports such a VM as `paused` with `critical: true`, and `show`
+  gives the free space of the drive that holds its first disk file. Free space
+  there (or move the VHDX), then **Resume** it; while the drive stays full,
+  Hyper-V pauses it again, and `resume` answers so.
+- **Resume** calls `Resume-VM` on the one VM with exactly that name, after
+  the same name and allow pattern checks as **Start**.
 
 - A graceful **Shut down** needs the guest's shutdown integration service. The worker
   waits up to 80 seconds (60 for a restart) and then answers with the state at

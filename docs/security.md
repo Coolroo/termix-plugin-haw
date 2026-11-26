@@ -3,8 +3,8 @@
 ## What HAW can do on a host
 
 Only what vmctl does, and vmctl does only the verbs of the
-[protocol](protocol.md): read the host and its VMs, start, stop and restart a
-VM, and say how to reach its console. HAW 1.0 has no verb that makes, deletes
+[protocol](protocol.md): read the host and its VMs, start, resume, stop and
+restart a VM, and say how to reach its console. HAW 1.0 has no verb that makes, deletes
 or changes a VM, or that changes the host.
 
 - **One command.** The account HAW logs in as has `ForceCommand` in sshd: sshd

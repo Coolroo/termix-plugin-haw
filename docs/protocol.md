@@ -56,19 +56,19 @@ id, or `null` when the request could not be read.
 
 ### Error codes
 
-| Code                  | Meaning                                                                     |
-| --------------------- | --------------------------------------------------------------------------- |
-| `bad-request`         | Not JSON, a missing or wrong field, an unknown argument.                    |
-| `version`             | The back end does not speak this `v`. `error.versions` lists those it does. |
-| `unknown-verb`        | Not a verb of this protocol.                                                |
-| `not-in-this-version` | A verb of the protocol that this back end version does not do yet.          |
-| `name-not-allowed`    | The VM's name does not match the host's allow pattern.                      |
-| `protected`           | The VM is on the host's protect list.                                       |
-| `ceiling`             | The action would take the host past one of its ceilings.                    |
-| `not-found`           | No VM of that name.                                                         |
-| `wrong-state`         | The VM can't do that now (start a running VM, stop an off one).             |
-| `config`              | The host-side config file is missing or wrong. `info` still answers.        |
-| `backend`             | The hypervisor refused or failed. `message` says why.                       |
+| Code                  | Meaning                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------- |
+| `bad-request`         | Not JSON, a missing or wrong field, an unknown argument.                                       |
+| `version`             | The back end does not speak this `v`. `error.versions` lists those it does.                    |
+| `unknown-verb`        | Not a verb of this protocol.                                                                   |
+| `not-in-this-version` | A verb of the protocol that this back end version does not do yet.                             |
+| `name-not-allowed`    | The VM's name does not match the host's allow pattern.                                         |
+| `protected`           | The VM is on the host's protect list.                                                          |
+| `ceiling`             | The action would take the host past one of its ceilings.                                       |
+| `not-found`           | No VM of that name.                                                                            |
+| `wrong-state`         | The VM can't do that now (start a running VM, stop an off one, resume one that is not paused). |
+| `config`              | The host-side config file is missing or wrong. `info` still answers.                           |
+| `backend`             | The hypervisor refused or failed. `message` says why.                                          |
 
 ## The host's own limits
 
@@ -90,7 +90,7 @@ writable by it). No verb changes it.
   answers; every action on it, and `console-info` (a console is control of the
   VM), is refused with `name-not-allowed`. Default `^[a-z][a-z0-9-]{0,62}$`.
 - `protected`: names or wildcards (`*` and `?`, no case). A protected VM is
-  listed with `protected: true`. It can be started, but `stop`, `restart` (and
+  listed with `protected: true`. It can be started and resumed, but `stop`, `restart` (and
   in later versions `delete`, `snapshot`, `restore`) are refused with
   `protected`.
 - `ceilings`: the most CPUs and memory that running VMs may have together, and
@@ -114,7 +114,9 @@ A VM in a result:
   "uptimeSeconds": 3600,
   "addresses": ["192.0.2.10"],
   "allowed": true,
-  "protected": false
+  "protected": false,
+  "status": "Operating normally",
+  "critical": false
 }
 ```
 
@@ -122,23 +124,34 @@ A VM in a result:
 `other`. `memoryMB` is the memory the VM has now when it runs, else its
 startup memory. `addresses` may be empty (no guest services).
 
-| Verb                                               | Args               | Result                                                                                                                 |
-| -------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `info`                                             | none               | `{ host, backend, protocol, capacity, networks, verbs, limits }` (below)                                               |
-| `list`                                             | none               | `{ vms: [VM, ...] }`, sorted by name                                                                                   |
-| `show`                                             | `{ name }`         | `{ vm: VM + { generation, disks: [{ sizeGB, usedGB }], networks: [{ switch, mac, addresses }], checkpoints, notes } }` |
-| `start`                                            | `{ name }`         | `{ vm: VM }` after the start                                                                                           |
-| `stop`                                             | `{ name, force? }` | `{ vm: VM }`. `force: false` (default) asks the guest to shut down; `true` turns it off.                               |
-| `restart`                                          | `{ name, force? }` | `{ vm: VM }`. Default: shut down, then start. `force: true`: a hard reset.                                             |
-| `console-info`                                     | `{ name }`         | `{ console: { kind: "vmconnect", host, port, vmId } }`                                                                 |
-| `create`, `delete`, `snapshot`, `restore`, `users` | any                | `not-in-this-version` in version 1.0 of every back end                                                                 |
+`status` and `critical` came with back end 1.1.0 (HAW 1.0.6); an older back end
+sends neither, and HAW reads them as `""` and `false`. `status` is the
+hypervisor's own words for the VM's health (Hyper-V: the VM's `Status`, such
+as "Operating normally"). `critical` is true when the hypervisor marks the
+VM's state critical: it can't use its storage. Hyper-V shows such a VM as
+Paused-Critical (or Running-Critical, Off-Critical); vmctl gives the state
+without "Critical" (`paused`) and `critical: true`. Hyper-V pauses a VM by
+itself this way, most often when the drive that holds its disk files is almost
+full.
+
+| Verb                                               | Args               | Result                                                                                                                        |
+| -------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `info`                                             | none               | `{ host, backend, protocol, capacity, networks, verbs, limits }` (below)                                                      |
+| `list`                                             | none               | `{ vms: [VM, ...] }`, sorted by name                                                                                          |
+| `show`                                             | `{ name }`         | `{ vm: VM + { generation, disks: [{ sizeGB, usedGB }], networks: [{ switch, mac, addresses }], checkpoints, notes, drive } }` |
+| `start`                                            | `{ name }`         | `{ vm: VM }` after the start                                                                                                  |
+| `stop`                                             | `{ name, force? }` | `{ vm: VM }`. `force: false` (default) asks the guest to shut down; `true` turns it off.                                      |
+| `restart`                                          | `{ name, force? }` | `{ vm: VM }`. Default: shut down, then start. `force: true`: a hard reset.                                                    |
+| `resume` (1.1.0)                                   | `{ name }`         | `{ vm: VM }` after the resume. Only a `paused` VM; allowed on a protected VM, like `start`.                                   |
+| `console-info`                                     | `{ name }`         | `{ console: { kind: "vmconnect", host, port, vmId } }`                                                                        |
+| `create`, `delete`, `snapshot`, `restore`, `users` | any                | `not-in-this-version` in version 1.0 of every back end                                                                        |
 
 `info`:
 
 ```json
 {
   "host": { "name": "HV1" },
-  "backend": { "kind": "hyper-v", "version": "1.0.0" },
+  "backend": { "kind": "hyper-v", "version": "1.1.0" },
   "protocol": { "versions": [1] },
   "capacity": {
     "cpus": 16,
@@ -147,7 +160,16 @@ startup memory. `addresses` may be empty (no guest services).
     "disks": [{ "name": "C:", "sizeGB": 930, "freeGB": 410 }]
   },
   "networks": [{ "name": "LAN", "kind": "external" }],
-  "verbs": ["info", "list", "show", "start", "stop", "restart", "console-info"],
+  "verbs": [
+    "info",
+    "list",
+    "show",
+    "start",
+    "stop",
+    "restart",
+    "resume",
+    "console-info"
+  ],
   "limits": {
     "namePattern": "^[a-z][a-z0-9-]{0,62}$",
     "protected": ["test-*"],
@@ -157,7 +179,20 @@ startup memory. `addresses` may be empty (no guest services).
 }
 ```
 
-`verbs` lists only the verbs this back end does. `configProblem` is a message
+`verbs` lists only the verbs this back end does. A back end older than 1.1.0
+does not list `resume` and answers it with `unknown-verb`; HAW then shows no
+Resume button for that host and says to update vmctl there.
+
+`drive` in `show` (1.1.0) is the host drive that holds the VM's first disk
+file: `{ "name": "D:", "sizeGB": 930.7, "freeGB": 3.2 }`, or `null` when the
+VM has no disk file, the file is on a share, or the host can't say. HAW warns
+when `freeGB` is under 10.
+
+`resume` checks the allow pattern, then the state: a VM that is not paused
+gets `wrong-state`. It checks no ceiling, since a paused VM holds its CPUs and
+memory already. When the hypervisor pauses the VM again at once (its drive is
+still full), the answer is `backend`, with the free space on the drive when
+the host knows it. `configProblem` is a message
 when the config file is missing or wrong; then every verb but `info` answers
 `config`, and `limits` may be `null` or the defaults.
 
