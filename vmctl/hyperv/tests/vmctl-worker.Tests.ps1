@@ -13,6 +13,7 @@ BeforeAll {
     function global:Start-VM { [CmdletBinding(SupportsShouldProcess = $true)] param([object[]]$VM, [string[]]$Name, [switch]$AsJob, [switch]$Passthru) }
     function global:Stop-VM { [CmdletBinding(SupportsShouldProcess = $true)] param([object[]]$VM, [string[]]$Name, [switch]$Force, [switch]$TurnOff, [switch]$Save, [switch]$AsJob, [switch]$Passthru) }
     function global:Restart-VM { [CmdletBinding(SupportsShouldProcess = $true)] param([object[]]$VM, [string[]]$Name, [switch]$Force, [switch]$AsJob, [switch]$Passthru) }
+    function global:Resume-VM { [CmdletBinding(SupportsShouldProcess = $true)] param([object[]]$VM, [string[]]$Name, [switch]$AsJob, [switch]$Passthru) }
     function global:Get-VMNetworkAdapter { [CmdletBinding()] param([object[]]$VM) }
     function global:Get-VMHardDiskDrive { [CmdletBinding()] param([object[]]$VM) }
     function global:Get-VHD { [CmdletBinding()] param([string[]]$Path) }
@@ -30,7 +31,7 @@ BeforeAll {
         [pscustomobject]@{
             Name = $Name; Id = [guid]::NewGuid(); State = $State; ProcessorCount = $Cpus
             MemoryStartup = $StartupMB * 1MB; MemoryAssigned = $AssignedMB * 1MB
-            Uptime = [timespan]::FromSeconds($UptimeSeconds); Generation = 2; Notes = 'a test VM'
+            Uptime = [timespan]::FromSeconds($UptimeSeconds); Generation = 2; Notes = 'a test VM'; Status = 'Operating normally'
         }
     }
     function script:Set-Config {
@@ -110,6 +111,7 @@ Describe 'vmctl-worker.ps1' {
         Mock Start-VM { $VM[0].State = 'Running'; $VM[0].MemoryAssigned = $VM[0].MemoryStartup }
         Mock Stop-VM { $VM[0].State = 'Off'; [pscustomobject]@{ Kind = 'job' } }
         Mock Restart-VM { }
+        Mock Resume-VM { $VM[0].State = 'Running' }
         Mock Wait-VmJob { [pscustomobject]@{ Done = $true; Error = $null } }
         Mock Write-VmctlLog { }
     }
@@ -195,7 +197,7 @@ Describe 'vmctl-worker.ps1' {
         It 'refuses the name <Name> before it asks Hyper-V anything' -TestCases @(
             @{ Name = 'web-*' }, @{ Name = 'web-?' }, @{ Name = 'web-[1]' }, @{ Name = '*' }, @{ Name = 'a`b' }, @{ Name = "web-1`n" }
         ) {
-            foreach ($verb in 'show', 'start', 'stop', 'restart', 'console-info') {
+            foreach ($verb in 'show', 'start', 'stop', 'restart', 'resume', 'console-info') {
                 (Send $verb @{ name = $Name }).error.code | Should -Be 'bad-request'
             }
             Should -Invoke Get-VM -Times 0
@@ -242,13 +244,14 @@ Describe 'vmctl-worker.ps1' {
             $r.ok | Should -BeTrue
             $r.result.configProblem | Should -Match 'missing'
             $r.result.limits | Should -BeNullOrEmpty
-            foreach ($verb in 'list', 'show', 'start', 'stop', 'restart', 'console-info') {
+            foreach ($verb in 'list', 'show', 'start', 'stop', 'restart', 'resume', 'console-info') {
                 $a = @{}
                 if ($verb -ne 'list') { $a = @{ name = 'web-1' } }
                 (Send $verb $a -Config $missing).error.code | Should -Be 'config'
             }
             Should -Invoke Start-VM -Times 0
             Should -Invoke Stop-VM -Times 0
+            Should -Invoke Resume-VM -Times 0
         }
         It 'finds the problem in <Why>' -TestCases @(
             @{ Why = 'text that is not JSON'; Text = 'namePattern = x' },
@@ -290,7 +293,7 @@ Describe 'vmctl-worker.ps1' {
             $r = (Send 'info').result
             $r.host.name | Should -Be ([Environment]::MachineName)
             $r.backend.kind | Should -Be 'hyper-v'
-            $r.backend.version | Should -Be '1.0.0'
+            $r.backend.version | Should -Be '1.1.0'
             $r.capacity.cpus | Should -Be 16
             $r.capacity.memoryMB | Should -Be 65536
             $r.capacity.freeMemoryMB | Should -Be 20480
@@ -301,7 +304,7 @@ Describe 'vmctl-worker.ps1' {
             $r.limits.ceilings.memoryMB | Should -Be 16384
             $r.configProblem | Should -BeNullOrEmpty
             $script:Json | Should -Match '"configProblem":null'
-            ($r.verbs -join ',') | Should -Be 'info,list,show,start,stop,restart,console-info'
+            ($r.verbs -join ',') | Should -Be 'info,list,show,start,stop,restart,resume,console-info'
         }
         It 'keeps one-element lists as lists' {
             $null = Send 'info'
@@ -332,6 +335,29 @@ Describe 'vmctl-worker.ps1' {
             $w1.memoryMB | Should -Be 4096
             $w1.state | Should -Be 'off'
         }
+        It 'gives Hyper-V''s status and marks a critical state (Paused-Critical)' {
+            $w2 = $script:FakeVms | Where-Object { $_.Name -eq 'web-2' }
+            $w2.State = 'PausedCritical'
+            $w2.Status = 'Paused-Critical'
+            $vms = @((Send 'list').result.vms)
+            $v = $vms | Where-Object { $_.name -eq 'web-2' }
+            $v.state | Should -BeExactly 'paused'
+            $v.critical | Should -BeTrue
+            $v.status | Should -BeExactly 'Paused-Critical'
+            $w1 = $vms | Where-Object { $_.name -eq 'web-1' }
+            $w1.critical | Should -BeFalse
+            $w1.status | Should -BeExactly 'Operating normally'
+            $script:Json | Should -Match '"name":"web-1"[^}]*"status":"Operating normally","critical":false'
+        }
+        It 'marks a VM critical by its status alone, and gives an empty status as ""' {
+            $w2 = $script:FakeVms | Where-Object { $_.Name -eq 'web-2' }
+            $w2.State = 'Paused'
+            $w2.Status = 'Paused-Critical'
+            ($script:FakeVms | Where-Object { $_.Name -eq 'web-1' }).Status = $null
+            $vms = @((Send 'list').result.vms)
+            ($vms | Where-Object { $_.name -eq 'web-2' }).critical | Should -BeTrue
+            $script:Json | Should -Match '"name":"web-1"[^}]*"status":"","critical":false'
+        }
         It 'marks names outside the pattern and protected names (wildcards, no case)' {
             $vms = @((Send 'list').result.vms)
             ($vms | Where-Object { $_.name -eq 'Big-VM' }).allowed | Should -BeFalse
@@ -356,7 +382,8 @@ Describe 'vmctl-worker.ps1' {
         }
         It 'maps each Hyper-V state' -TestCases @(
             @{ S = 'Running'; W = 'running' }, @{ S = 'Off'; W = 'off' }, @{ S = 'Paused'; W = 'paused' }, @{ S = 'Saved'; W = 'saved' },
-            @{ S = 'Starting'; W = 'starting' }, @{ S = 'Stopping'; W = 'stopping' }, @{ S = 'Saving'; W = 'other' }, @{ S = 'RunningCritical'; W = 'other' }
+            @{ S = 'Starting'; W = 'starting' }, @{ S = 'Stopping'; W = 'stopping' }, @{ S = 'Saving'; W = 'other' }, @{ S = 'RunningCritical'; W = 'running' },
+            @{ S = 'PausedCritical'; W = 'paused' }, @{ S = 'OffCritical'; W = 'off' }, @{ S = 'Critical'; W = 'other' }
         ) {
             ConvertTo-VmState $S | Should -BeExactly $W
         }
@@ -376,6 +403,29 @@ Describe 'vmctl-worker.ps1' {
             $vm.networks[1].switch | Should -Be ''
             $script:Json | Should -Match '"disks":\[\{"sizeGB":40'
             $script:Json | Should -Match '"mac":"00:15:5d:01:02:05","addresses":\[\]'
+        }
+        It 'gives the drive of the first disk file with its free space' {
+            Mock Get-VMHardDiskDrive { [pscustomobject]@{ Path = $null }; [pscustomobject]@{ Path = 'D:\Hyper-V\web-2.vhdx' }; [pscustomobject]@{ Path = 'C:\vms\b.vhdx' } }
+            Mock Get-PSDrive { [pscustomobject]@{ Name = 'C'; Used = 520GB; Free = 410GB }; [pscustomobject]@{ Name = 'D'; Used = 927.5GB; Free = 3.2GB } }
+            $vm = (Send 'show' @{ name = 'web-2' }).result.vm
+            $vm.drive.name | Should -BeExactly 'D:'
+            $vm.drive.freeGB | Should -Be 3.2
+            $vm.drive.sizeGB | Should -Be 930.7
+            Should -Invoke Get-PSDrive -Times 1 -ParameterFilter { $Name -eq 'D' }
+        }
+        It 'gives drive null for a disk on a share, no disk, or a drive Windows does not measure' {
+            Mock Get-VMHardDiskDrive { [pscustomobject]@{ Path = '\\files\vms\web-2.vhdx' } }
+            $null = Send 'show' @{ name = 'web-2' }
+            $script:Json | Should -Match '"drive":null'
+            Mock Get-VMHardDiskDrive { }
+            $null = Send 'show' @{ name = 'web-2' }
+            $script:Json | Should -Match '"drive":null'
+            Mock Get-VMHardDiskDrive { [pscustomobject]@{ Path = 'E:\web-2.vhdx' } }
+            (Send 'show' @{ name = 'web-2' }).ok | Should -BeTrue
+            $script:Json | Should -Match '"drive":null'
+            Mock Get-PSDrive { throw 'no such drive' }
+            (Send 'show' @{ name = 'web-2' }).ok | Should -BeTrue
+            $script:Json | Should -Match '"drive":null'
         }
         It 'gives sizeGB null when Get-VHD fails, and still answers' {
             Mock Get-VHD { throw 'access denied' }
@@ -413,6 +463,13 @@ Describe 'vmctl-worker.ps1' {
         }
         It 'refuses a VM that runs (wrong-state)' {
             (Send 'start' @{ name = 'web-2' }).error.code | Should -Be 'wrong-state'
+            Should -Invoke Start-VM -Times 0
+        }
+        It 'refuses a paused VM and says to resume it' {
+            ($script:FakeVms | Where-Object { $_.Name -eq 'web-2' }).State = 'PausedCritical'
+            $r = Send 'start' @{ name = 'web-2' }
+            $r.error.code | Should -Be 'wrong-state'
+            $r.error.message | Should -Match 'resume it instead'
             Should -Invoke Start-VM -Times 0
         }
         It 'refuses a name outside the pattern' {
@@ -521,6 +578,66 @@ Describe 'vmctl-worker.ps1' {
             (Send 'restart' @{ name = 'web-1' }).error.code | Should -Be 'wrong-state'
             (Send 'restart' @{ name = 'build-1' }).error.code | Should -Be 'protected'
             Should -Invoke Restart-VM -Times 0
+        }
+    }
+
+    Context 'resume' {
+        BeforeEach {
+            $script:Paused = $script:FakeVms | Where-Object { $_.Name -eq 'web-2' }
+            $script:Paused.State = 'PausedCritical'
+            $script:Paused.Status = 'Paused-Critical'
+            Mock Resume-VM { $VM[0].State = 'Running'; $VM[0].Status = 'Operating normally' }
+        }
+        It 'resumes a paused VM with the VM object from Get-VM' {
+            $r = Send 'resume' @{ name = 'web-2' }
+            $r.ok | Should -BeTrue
+            $r.result.vm.state | Should -Be 'running'
+            $r.result.vm.critical | Should -BeFalse
+            Should -Invoke Resume-VM -Times 1 -ParameterFilter { $VM[0].Name -ceq 'web-2' -and -not $PSBoundParameters.ContainsKey('Name') }
+        }
+        It 'resumes a protected VM, as start does' {
+            ($script:FakeVms | Where-Object { $_.Name -eq 'build-1' }).State = 'Paused'
+            (Send 'resume' @{ name = 'build-1' }).ok | Should -BeTrue
+            Should -Invoke Resume-VM -Times 1
+        }
+        It 'checks no ceiling: a paused VM holds its CPUs and memory already' {
+            Set-Config '{"ceilings":{"cpus":2}}'
+            (Send 'resume' @{ name = 'web-2' }).ok | Should -BeTrue
+        }
+        It 'refuses a VM that is not paused (wrong-state): <Why>' -TestCases @(
+            @{ Why = 'running'; Name = 'lab-3'; Hint = 'resume needs it paused$' },
+            @{ Why = 'off'; Name = 'web-1'; Hint = 'start it instead' }
+        ) {
+            $r = Send 'resume' @{ name = $Name }
+            $r.error.code | Should -Be 'wrong-state'
+            $r.error.message | Should -Match $Hint
+            Should -Invoke Resume-VM -Times 0
+        }
+        It 'refuses a name outside the pattern, and a name no VM has' {
+            ($script:FakeVms | Where-Object { $_.Name -eq 'Big-VM' }).State = 'Paused'
+            (Send 'resume' @{ name = 'Big-VM' }).error.code | Should -Be 'name-not-allowed'
+            (Send 'resume' @{ name = 'web-9' }).error.code | Should -Be 'not-found'
+            Should -Invoke Resume-VM -Times 0
+        }
+        It 'refuses an unknown argument' {
+            (Send 'resume' @{ name = 'web-2'; force = $true }).error.code | Should -Be 'bad-request'
+            Should -Invoke Resume-VM -Times 0
+        }
+        It 'answers backend with the free space when Hyper-V pauses the VM again' {
+            Mock Resume-VM { }
+            Mock Get-VMHardDiskDrive { [pscustomobject]@{ Path = 'D:\Hyper-V\web-2.vhdx' } }
+            Mock Get-PSDrive { [pscustomobject]@{ Name = 'D'; Used = 927.5GB; Free = 0.4GB } }
+            $r = Send 'resume' @{ name = 'web-2' }
+            $r.error.code | Should -Be 'backend'
+            $r.error.message | Should -Match 'paused again \(critical\)'
+            $r.error.message | Should -Match 'D: has 0\.4 GB free'
+            $r.error.message | Should -Match 'Free space first'
+        }
+        It 'turns a Hyper-V failure into backend' {
+            Mock Resume-VM { throw 'The operation cannot be performed while the object is in its current state.' }
+            $r = Send 'resume' @{ name = 'web-2' }
+            $r.error.code | Should -Be 'backend'
+            $r.error.message | Should -Match 'current state'
         }
     }
 
