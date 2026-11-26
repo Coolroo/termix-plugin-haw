@@ -311,7 +311,7 @@ describe("a paused VM", () => {
     // The drive comes from show, which a paused VM reads without a click.
     expect(
       (await within(note).findByTestId("vm-paused-drive")).textContent,
-    ).toBe("Drive D:: 3.2 GB free of 930.7 GB");
+    ).toBe("Drive D: has 3.2 GB free of 930.7 GB");
     expect(within(note).getByTestId("vm-low-drive").textContent).toBe(
       locales.vms.lowDrive,
     );
